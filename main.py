@@ -29,7 +29,7 @@ v2.7.0：发送临时目录默认落到共享 temp（协议端可读，修掉 fi
 from __future__ import annotations
 
 import asyncio
-import logging
+import json
 import os
 import re
 import time
@@ -43,8 +43,11 @@ from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 from astrbot.api.star import Context, Star
 
 from .core.config import GroupConfigStore, data_root, normalize_exts
+from .core.ops import AuditLog, RecycleStore, TaskManager
 from .core.qqfile import QQFileClient, QQFileError, norm_files, norm_folders
+from .core.scanner import list_folder, walk_files
 from .core.scheduler import CleanupScheduler
+from .core.trend import TrendStore
 from .core.sendtmp import (
     DEFAULT_KEEP_SECONDS,
     DEFAULT_ORPHAN_HOURS,
@@ -59,6 +62,7 @@ from .core.sendtmp import (
     plan_sweep,
     resolve_send_dir,
 )
+from .core.validate import clamp_int as vint
 
 try:
     from astrbot.core.utils.astrbot_path import get_astrbot_temp_path
@@ -67,7 +71,7 @@ except Exception:  # 旧版 AstrBot / 开发环境
 
 PLUGIN_NAME = "astrbot_plugin_groupfile_console"
 CMD = "群文件"
-VERSION = "2.7.0"
+VERSION = "2.8.0"
 
 GB = 1024 ** 3
 LISTING_TTL = 300  # 列表上下文有效期（秒）
@@ -83,6 +87,7 @@ class GroupFileConsole(Star):
         self.config: dict = config or {}
         self.store = GroupConfigStore()
         self.bot = None
+        self.platform_id = ""
         self.qq: QQFileClient | None = None
         self.scheduler = CleanupScheduler(self)
         self.umo_cache: dict[str, str] = {}  # group_id -> unified_msg_origin
@@ -100,6 +105,14 @@ class GroupFileConsole(Star):
         self._last_sweep = 0.0
         self._last_sweep_info: dict[str, Any] = {}
 
+        # ---- 运维基础设施（v2.8.0）----
+        self.audit = AuditLog()
+        self.tasks = TaskManager()
+        self.recycle_store = RecycleStore()
+        self.trend = TrendStore()
+        self._locks: dict[str, asyncio.Lock] = {}
+        self._event_clients: dict[int, QQFileClient] = {}
+
         # ---- Plugin Pages 后端 API ----
         api = context.register_web_api
         api(f"/{PLUGIN_NAME}/status", self.api_status, ["GET"], "插件运行状态")
@@ -110,6 +123,7 @@ class GroupFileConsole(Star):
         api(f"/{PLUGIN_NAME}/rules", self.api_rules_set, ["POST"], "保存分类规则")
         api(f"/{PLUGIN_NAME}/rule_test", self.api_rule_test, ["POST"], "试一试：文件名测规则命中")
         api(f"/{PLUGIN_NAME}/cleanup_preview", self.api_cleanup_preview, ["POST"], "预览整理（只报告不移动）")
+        api(f"/{PLUGIN_NAME}/ttl_preview", self.api_ttl_preview, ["POST"], "预览时效清理（只报告不动作）")
         api(f"/{PLUGIN_NAME}/check_limit", self.api_check_limit, ["GET"], "手动检查容量（不自动发消息）")
         api(f"/{PLUGIN_NAME}/files", self.api_files, ["GET"], "群文件列表")
         api(f"/{PLUGIN_NAME}/delete", self.api_delete, ["POST"], "删除文件")
@@ -120,6 +134,16 @@ class GroupFileConsole(Star):
         api(f"/{PLUGIN_NAME}/send_tmp", self.api_send_tmp_get, ["GET"], "发送临时文件策略")
         api(f"/{PLUGIN_NAME}/send_tmp", self.api_send_tmp_set, ["POST"], "保存发送临时文件策略")
         api(f"/{PLUGIN_NAME}/send_tmp_sweep", self.api_send_tmp_sweep, ["POST"], "立即清理发送临时文件")
+        api(f"/{PLUGIN_NAME}/task", self.api_task_start, ["POST"], "提交后台任务（整理/查重/扫描/发文件）")
+        api(f"/{PLUGIN_NAME}/tasks", self.api_tasks, ["GET"], "任务列表")
+        api(f"/{PLUGIN_NAME}/task_cancel", self.api_task_cancel, ["POST"], "取消任务")
+        api(f"/{PLUGIN_NAME}/audit", self.api_audit, ["GET"], "审计日志")
+        api(f"/{PLUGIN_NAME}/ops", self.api_ops_get, ["GET"], "运维设置")
+        api(f"/{PLUGIN_NAME}/ops", self.api_ops_set, ["POST"], "保存运维设置")
+        api(f"/{PLUGIN_NAME}/trend", self.api_trend, ["GET"], "容量趋势")
+        api(f"/{PLUGIN_NAME}/recycle", self.api_recycle, ["GET"], "回收站列表")
+        api(f"/{PLUGIN_NAME}/recycle_restore", self.api_recycle_restore, ["POST"], "从回收站还原")
+        api(f"/{PLUGIN_NAME}/recycle_delete", self.api_recycle_delete, ["GET"], "清理回收站索引")
         api(f"/{PLUGIN_NAME}/export", self.api_export, ["GET"], "导出群配置 JSON")
         api(f"/{PLUGIN_NAME}/import", self.api_import, ["POST"], "导入群配置 JSON")
         api(f"/{PLUGIN_NAME}/export_all", self.api_export_all, ["GET"], "导出全部群配置（全局备份）")
@@ -159,19 +183,64 @@ class GroupFileConsole(Star):
         except Exception:
             pass
 
-    def _is_admin_user(self, event: AstrMessageEvent, gid: str | None = None) -> bool:
-        if event.is_admin():
-            return True
-        uid = str(event.get_sender_id())
-        # 全局管理员：WebUI(store) 优先，其次 AstrBot 面板配置
-        store_admins = self.store.get_admin_users()
-        if store_admins:
-            admins = list(store_admins)
-        else:
-            admins = [str(a) for a in (self.config.get("admin_users") or [])]
-        if gid:
-            admins += [str(a) for a in (self.store.get_group(gid).get("admins") or [])]
-        return uid in admins
+    # ================= 权限 / 锁 / 审计（v2.8.0） =================
+    def group_lock(self, gid: str) -> asyncio.Lock:
+        gid = str(gid)
+        lock = self._locks.get(gid)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._locks[gid] = lock
+        return lock
+
+    def role_of(self, event: AstrMessageEvent, gid: str | None = None) -> str:
+        """view < move < delete < admin；AstrBot 管理员/全局管理员恒为 admin。"""
+        try:
+            if event.is_admin():
+                return "admin"
+        except Exception:
+            pass
+        uid = str(event.get_sender_id() or "")
+        if not uid:
+            return ""
+        globals_ = self.store.get_admin_users() or [str(a) for a in (self.config.get("admin_users") or [])]
+        if uid in globals_:
+            return "admin"
+        if not gid:
+            return ""
+        return self.store.role_of(gid, uid)
+
+    def can(self, event: AstrMessageEvent, gid: str, need: str) -> bool:
+        order = {"view": 1, "move": 2, "delete": 3, "admin": 4}
+        have = order.get(self.role_of(event, gid), 0)
+        return have >= order.get(need, 4)
+
+    def audit_now(
+        self,
+        actor: str,
+        gid: str,
+        action: str,
+        target: str = "",
+        result: str = "ok",
+        detail: str = "",
+    ) -> None:
+        try:
+            if not self.store.get_ops().get("audit_enabled", True):
+                return
+            self.audit.append(actor, gid, action, target, result, detail)
+        except Exception:
+            pass
+
+    def client_for(self, event: AstrMessageEvent) -> QQFileClient | None:
+        """按事件所属平台取客户端，避免多 OneBot 平台时绑错。"""
+        bot = getattr(event, "bot", None)
+        if bot is not None and hasattr(bot, "api"):
+            key = id(bot)
+            c = self._event_clients.get(key)
+            if c is None:
+                c = QQFileClient(bot)
+                self._event_clients[key] = c
+            return c
+        return self.qq
 
     # ================= 发送临时目录 / 清理（v2.7.0） =================
     @staticmethod
@@ -399,17 +468,34 @@ class GroupFileConsole(Star):
         self._send_inflight.clear()
 
     async def _bind_bot(self) -> None:
+        """绑定一个可用的 aiocqhttp 客户端。
+
+        v2.8.0：不再只看「第一个平台」，遍历所有平台，优先已连接且能拿到 api 的；
+        命令执行时还会用 event.bot 覆盖成事件所属平台的客户端。
+        """
+        candidates = []
         try:
-            platform = self.context.get_platform(filter.PlatformAdapterType.AIOCQHTTP)
-            if not platform or not hasattr(platform, "get_client"):
-                return
-            client = platform.get_client()
-            if client and hasattr(client, "api") and hasattr(client.api, "call_action"):
-                self.bot = client
-                self.qq = QQFileClient(client)
-                logger.info("[群管理] 已绑定 OneBot 客户端")
-        except Exception as e:
-            logger.warning(f"[群管理] 绑定失败: {e}")
+            candidates = list(self.context.platform_manager.platform_insts)
+        except Exception:
+            p = self.context.get_platform(filter.PlatformAdapterType.AIOCQHTTP)
+            candidates = [p] if p else []
+        for platform in candidates:
+            try:
+                meta = platform.meta()
+                if "aiocqhttp" not in str(getattr(meta, "name", "")):
+                    continue
+                if not hasattr(platform, "get_client"):
+                    continue
+                client = platform.get_client()
+                if client and hasattr(client, "api") and hasattr(client.api, "call_action"):
+                    self.bot = client
+                    self.qq = QQFileClient(client)
+                    self.platform_id = getattr(meta, "id", "")
+                    logger.info(f"[群管理] 已绑定 OneBot 客户端（{self.platform_id or 'platform'}）")
+                    return
+            except Exception as e:
+                logger.debug(f"[群管理] 平台绑定跳过: {e}")
+        logger.warning("[群管理] 没有可用的 aiocqhttp 客户端")
 
     # ================= 群通知（定时任务/WebUI 触发）=================
     async def notify_group(self, group_id: str | int, text: str) -> None:
@@ -453,6 +539,10 @@ class GroupFileConsole(Star):
             return str(event.get_sender_id() or "")
         except Exception:
             return ""
+
+    def _pending_key(self, event: AstrMessageEvent, gid: str) -> str:
+        """待确认操作按「用户+群」隔离，防止 A 群发起、B 群确认。"""
+        return f"{self._uid(event)}:{gid}"
 
     def _save_listing(self, event: AstrMessageEvent, gid: str, folder: str, folder_id: str, files: list[dict]) -> None:
         """记录最近一次文件列表（列/查），5 分钟内可用序号直接 删/移。"""
@@ -544,6 +634,11 @@ class GroupFileConsole(Star):
             "/gf 开、关 —— 本群启用/停用\n"
             "/gf 管 @某人 / 管 删 @某人 —— 群管理员\n"
             "/gf 确认、取消 —— 两段式确认\n"
+            "🧵 运维：\n"
+            "/gf 预览 —— 试运行：只报告将移动/回收/删除哪些文件\n"
+            "/gf 任务 —— 后台任务进度\n"
+            "/gf 审计 [n] —— 最近操作审计\n"
+            "/gf 回收 —— 回收站；/gf 恢复 <序号> 还原\n"
             "━━━━━━━━━━━━\n"
             "💡 旧命令名（列表/删除/移动/诊断等）都能用；\n"
             "   文件夹名不用打全（如 /gf 列 hv 自动进 HV2）；\n"
@@ -560,24 +655,27 @@ class GroupFileConsole(Star):
         if not gid:
             yield event.plain_result("无法确定群号，请指定：/gf 状态 <群号>")
             return
-        if not self.qq:
+        qq = self.client_for(event) or self.qq
+        if not qq:
             yield event.plain_result("OneBot 客户端未就绪，稍后再试")
             return
         # v2.7.0：容量接口失败不再整条报错——文件列表/规则/发送目录照常显示
         info: dict[str, Any] = {}
         cap_err = ""
         try:
-            info = await self.qq.file_system_info(gid)
+            info = await qq.file_system_info(gid)
         except QQFileError as e:
             cap_err = str(e)
         try:
-            raw = await self.qq.root_files(gid)
+            raw = await qq.root_files(gid)
         except QQFileError as e:
             yield event.plain_result(f"读取群文件失败：{e}")
             return
         used = int(info.get("used_space") or 0)
         total = int(info.get("total_space") or 0)
         count = int(info.get("file_count") or 0)
+        if total > 0:
+            self.trend.sample(gid, used, total, count)
         folders = norm_folders(raw)
         cfg = self.store.get_group(gid)
         cleanup = cfg.get("cleanup") or {}
@@ -594,6 +692,10 @@ class GroupFileConsole(Star):
         ttl_act_txt = {"report": "只报告", "recycle": "移入回收", "delete": "删除"}.get(ttl_action, ttl_action)
         crones = cleanup.get("crones") or []
         sd = self.send_dir_info()
+        role_counts: dict[str, int] = {}
+        for _r in (cfg.get("permissions") or {}).values():
+            role_counts[_r] = role_counts.get(_r, 0) + 1
+        role_txt = "、".join(f"{k} {v}" for k, v in role_counts.items() if k) or "无"
         lines = [
             f"📊 群 {gid} 文件状态",
             f"· 文件数：{count} 个 / 文件夹 {len(folders)} 个",
@@ -603,7 +705,7 @@ class GroupFileConsole(Star):
             f"· 时效清理：{'开（默认 ' + str(ttl_days) + ' 天，' + ttl_act_txt + '）' if ttl_on else '关'}",
             f"· 容量提醒：{'开' if quota_on else '关'}"
             + (f"（超 {count_limit} 个 / {space_limit_gb}GB 提醒）" if quota_on else ""),
-            f"· 管理员：{'、'.join(admins) if admins else '仅主人/全局管理员'}",
+            f"· 管理员：{'、'.join(admins) if admins else '仅主人/全局管理员'}；角色：{role_txt}",
             f"· 发送临时文件：{'共享目录' if sd['shared'] else '⚠ 非共享目录'} · 保留 {sd['keep_seconds']}s · 残留 {sd['orphan_hours']}h",
             f"  {sd['dir']}（{sd['source']}）",
             f"· 分类规则 {len(rules)} 条：",
@@ -624,51 +726,79 @@ class GroupFileConsole(Star):
 
     @groupfile.command("列", alias={"列表", "ls"})
     async def cmd_list(self, event: AstrMessageEvent) -> None:
-        """列：无参数=根目录文件+文件夹；带文件夹名=该文件夹内文件。结果可用序号继续 删/移。"""
+        """列：根目录/文件夹文件（分页，每页 30），序号为全量序号，可直接 删/移。"""
         gid, args = self._parse_args(event)
         if not gid:
-            yield event.plain_result("无法确定群号，请指定：/gf 列 [群号] [文件夹名]")
+            yield event.plain_result("无法确定群号，请指定：/gf 列 [群号] [文件夹名] [页码]")
             return
-        if not self.qq or not self.qq.available:
+        qq = self.client_for(event) or self.qq
+        if not qq or not qq.available:
             yield event.plain_result("OneBot 客户端未就绪，稍后再试")
             return
+        page = 1
         folder_name = " ".join(args).strip() if args else ""
+        if len(args) >= 2 and args[-1].isdigit():
+            page = max(1, int(args[-1]))
+            folder_name = " ".join(args[:-1]).strip()
         try:
-            raw = await self.qq.root_files(gid)
+            raw = await qq.root_files(gid)
+            pool = {d["name"]: d["folder_id"] for d in norm_folders(raw)}
+            if folder_name in ("根目录", "根", "root"):
+                folder_name = ""
+            if folder_name.isdigit() and folder_name not in pool:
+                page = max(1, int(folder_name))
+                folder_name = ""
             if folder_name:
-                pool = {d["name"]: d["folder_id"] for d in norm_folders(raw)}
                 cands = self._match_folders(pool, folder_name)
                 if not cands:
                     avail = "、".join(list(pool)[:10]) or "（根目录下没有文件夹）"
                     yield event.plain_result(
                         f"未找到文件夹「{folder_name}」。现有文件夹：{avail}\n"
-                        "（输入名称的一部分也能自动匹配，如 /gf 列 hv 会进 HV2）"
+                        "（输入名称的一部分也能自动匹配，如 /gf 列 hv 会进 HV2；翻页：/gf 列 文件夹 2）"
                     )
                     return
                 if len(cands) > 1:
                     yield event.plain_result(
-                        self._fmt_folder_candidates(cands, folder_name) + "\n请用完整名称重试：/gf 列 <名称>"
+                        self._fmt_folder_candidates(cands, folder_name) + "\n请用完整名称重试：/gf 列 <名称> [页码]"
                     )
                     return
                 resolved = cands[0]
                 match_hint = "" if resolved == folder_name else f"（按「{folder_name}」自动匹配）"
-                raw = await self.qq.files_by_folder(gid, pool[resolved])
+                raw = await qq.files_by_folder(gid, pool[resolved])
                 files = norm_files(raw)
                 self._save_listing(event, gid, resolved, pool[resolved], files)
-                lines = [f"📁 {resolved}/{match_hint} 共 {len(files)} 个文件（可 /gf 删 序号 · /gf 移 序号 目标文件夹）"]
-                for i, f in enumerate(files, 1):
-                    lines.append(f"{i}. {f['name']}（{self._fmt_size(f['size'])}）")
+                page_size = 30
+                total_pages = max(1, (len(files) + page_size - 1) // page_size)
+                page = min(page, total_pages)
+                start = (page - 1) * page_size
+                lines = [
+                    f"📁 {resolved}{match_hint} 共 {len(files)} 个文件"
+                    f"（第 {page}/{total_pages} 页；/gf 列 {resolved} {page + 1} 翻页）"
+                ]
+                for i in range(start, min(start + page_size, len(files))):
+                    f = files[i]
+                    lines.append(f"{i + 1}. {f['name']}（{self._fmt_size(f['size'])}）")
                 if not files:
                     lines.append("（空）")
             else:
                 files = norm_files(raw)
                 folders = norm_folders(raw)
                 self._save_listing(event, gid, "", "", files)
-                lines = [f"📁 群 {gid} 根目录：{len(files)} 个文件 / {len(folders)} 个文件夹"]
-                for i, f in enumerate(files, 1):
-                    lines.append(f"{i}. {f['name']}（{self._fmt_size(f['size'])}）")
-                for d in folders:
+                page_size = 30
+                total_pages = max(1, (len(files) + page_size - 1) // page_size)
+                page = min(page, total_pages)
+                start = (page - 1) * page_size
+                lines = [
+                    f"📁 群 {gid} 根目录：{len(files)} 个文件 / {len(folders)} 个文件夹"
+                    f"（第 {page}/{total_pages} 页；/gf 列 {page + 1} 翻页）"
+                ]
+                for i in range(start, min(start + page_size, len(files))):
+                    f = files[i]
+                    lines.append(f"{i + 1}. {f['name']}（{self._fmt_size(f['size'])}）")
+                for d in folders[:20]:
                     lines.append(f"📂 {d['name']}（{d['file_count']} 个文件）→ /gf 列 {d['name']}")
+                if len(folders) > 20:
+                    lines.append(f"... 其余 {len(folders) - 20} 个文件夹略")
                 if not files and not folders:
                     lines.append("（空）")
         except QQFileError as e:
@@ -679,7 +809,7 @@ class GroupFileConsole(Star):
 
     @groupfile.command("查", alias={"搜", "搜索", "find"})
     async def cmd_search(self, event: AstrMessageEvent) -> None:
-        """查：关键词全目录搜索；带序号 = 下载并发送该文件。结果可用序号 删/移。"""
+        """查：关键词全目录搜索（支持空格）；末尾数字 = 序号，下载并发送该文件。"""
         gid, args = self._parse_args(event)
         if not gid:
             yield event.plain_result("无法确定群号，请指定：/gf 查 [群号] <关键词> [序号]")
@@ -687,10 +817,18 @@ class GroupFileConsole(Star):
         if not args:
             yield event.plain_result("用法：/gf 查 [群号] <关键词> [序号]\n例：/gf 查 温泉 → 列出；/gf 查 温泉 1 → 发送第 1 个")
             return
-        kw = args[0]
-        pick = int(args[1]) if len(args) > 1 and args[1].isdigit() else 0
+        pick = int(args[-1]) if args[-1].isdigit() else 0
+        kw = " ".join(args[:-1] if pick else args).strip()
+        if not kw:
+            yield event.plain_result("用法：/gf 查 <关键词> [序号]（关键词不能为空）")
+            return
+        qq = self.client_for(event) or self.qq
+        if not qq or not qq.available:
+            yield event.plain_result("OneBot 客户端未就绪，稍后再试")
+            return
         try:
-            hits = [f for f in await self._collect_files(gid) if kw.lower() in str(f["name"]).lower()]
+            scan = await self._collect_files(gid, qq)
+            hits = [f for f in scan if kw.lower() in str(f["name"]).lower()]
         except QQFileError as e:
             yield event.plain_result(f"读取群文件失败：{e}")
             return
@@ -703,8 +841,9 @@ class GroupFileConsole(Star):
                 yield event.plain_result(f"序号超范围：只有 {len(hits)} 个命中")
                 return
             f = hits[pick - 1]
-            dest, err = await self._download_file(gid, f)
+            dest, err = await self._download_file(gid, f, qq)
             if dest is None:
+                self.audit_now(self._uid(event), gid, "发文件", str(f.get("name")), "fail", err)
                 async for r in self._reply(event, f"发送失败：{err}"):
                     yield r
                 return
@@ -721,6 +860,7 @@ class GroupFileConsole(Star):
                 self._unmark_inflight(dest)
             self._schedule_cleanup([dest])
             keep = self.send_settings()["keep_seconds"]
+            self.audit_now(self._uid(event), gid, "发文件", str(f.get("name")), "ok", f"{self._fmt_size(f.get('size') or 0)}")
             async for r in self._reply(event, f"📤 已发送「{f['name']}」（临时文件 {keep}s 后清理）"):
                 yield r
             return
@@ -747,6 +887,8 @@ class GroupFileConsole(Star):
             f"· 发送目录：{sd['dir']}",
             f"  {'共享 temp（协议端可读）' if sd['shared'] else '⚠ 不在共享 temp，协议端可能读不到'}；来源 {sd['source']}",
             f"· 发送清理：{'开' if sd['enabled'] else '关'} · 保留 {sd['keep_seconds']}s · 残留 {sd['orphan_hours']}h · 发送中 {sd['inflight']} 个",
+            f"· 任务：运行中 {self.tasks.stats().get('running', 0)} / 历史 {self.tasks.stats().get('history', 0)}；"
+            f"审计 {self.audit.stats().get('size', 0)} 字节；回收站 {self.recycle_store.stats().get('count', 0)} 条",
         ]
         if sd.get("last_sweep"):
             ls = sd["last_sweep"]
@@ -768,10 +910,11 @@ class GroupFileConsole(Star):
         if not gid:
             yield event.plain_result("无法确定群号，请指定：/gf 删 [群号] <文件夹名> <序号|全部>")
             return
-        if not self._is_admin_user(event, gid):
-            yield event.plain_result("仅管理员可删除群文件")
+        if not self.can(event, gid, "delete"):
+            yield event.plain_result("没有删除权限（需要 delete/admin 角色）")
             return
-        if not self.qq or not self.qq.available:
+        qq = self.client_for(event) or self.qq
+        if not qq or not qq.available:
             yield event.plain_result("OneBot 客户端未就绪，稍后再试")
             return
         label = ""
@@ -783,10 +926,14 @@ class GroupFileConsole(Star):
             )
             return
         if args and len(args) >= 2 and args[0] not in ("全部", "all") and not args[0].isdigit():
-            # 语法 A：/gf 删 <文件夹名> <序号|全部>（文件夹名支持模糊匹配）
-            folder_name, spec = args[0], args[1]
+            # 语法 A：/gf 删 <文件夹名> <序号|全部>（文件夹名可含空格，取最后一个参数为范围）
+            spec = args[-1]
+            folder_name = " ".join(args[:-1]).strip()
+            if spec not in ("全部", "all") and not re.fullmatch(r"[\d,\-，]+", spec):
+                yield event.plain_result(f"序号无效：{spec}（支持 3 / 3,5-7 / 全部）")
+                return
             try:
-                root = await self.qq.root_files(gid)
+                root = await qq.root_files(gid)
                 pool = {d["name"]: d["folder_id"] for d in norm_folders(root)}
                 cands = self._match_folders(pool, folder_name)
                 if not cands:
@@ -799,7 +946,7 @@ class GroupFileConsole(Star):
                     )
                     return
                 resolved = cands[0]
-                raw = await self.qq.files_by_folder(gid, pool[resolved])
+                raw = await qq.files_by_folder(gid, pool[resolved])
                 files = norm_files(raw)
                 self._save_listing(event, gid, resolved, pool[resolved], files)
             except QQFileError as e:
@@ -828,7 +975,7 @@ class GroupFileConsole(Star):
         preview = [f"· {t['name']}（{self._fmt_size(t.get('size') or 0)}）" for t in targets[:10]]
         if len(targets) > 10:
             preview.append(f"... 等共 {len(targets)} 个")
-        self._pending[self._uid(event)] = {"action": "delete", "gid": gid, "targets": targets, "ts": time.time()}
+        self._pending[self._pending_key(event, gid)] = {"action": "delete", "gid": gid, "targets": targets, "ts": time.time()}
         text = (
             f"⚠ 将从「{label}」删除 {len(targets)} 个文件：\n" + "\n".join(preview)
             + "\n60 秒内回复 /gf 确认 执行；/gf 取消 放弃"
@@ -843,10 +990,11 @@ class GroupFileConsole(Star):
         if not gid:
             yield event.plain_result("无法确定群号，请指定：/gf 移 [群号] <序号|关键词> <目标文件夹>")
             return
-        if not self._is_admin_user(event, gid):
-            yield event.plain_result("仅管理员可移动群文件")
+        if not self.can(event, gid, "move"):
+            yield event.plain_result("没有移动权限（需要 move/delete/admin 角色）")
             return
-        if not self.qq or not self.qq.available:
+        qq = self.client_for(event) or self.qq
+        if not qq or not qq.available:
             yield event.plain_result("OneBot 客户端未就绪，稍后再试")
             return
         if len(args) < 2:
@@ -866,7 +1014,7 @@ class GroupFileConsole(Star):
             targets = [files[idx - 1]]
         else:
             try:
-                all_files = await self._collect_files(gid)
+                all_files = await self._collect_files(gid, qq)
             except QQFileError as e:
                 yield event.plain_result(f"读取群文件失败：{e}")
                 return
@@ -886,7 +1034,7 @@ class GroupFileConsole(Star):
         # 解析目标文件夹：先模糊匹配现有（唯一命中直接用），无匹配才新建
         created = False
         try:
-            root = await self.qq.root_files(gid)
+            root = await qq.root_files(gid)
             pool = {d["name"]: d["folder_id"] for d in norm_folders(root)}
         except QQFileError as e:
             yield event.plain_result(f"读取文件夹失败：{e}")
@@ -903,27 +1051,34 @@ class GroupFileConsole(Star):
                 target = cands[0]  # 唯一模糊命中：自动改用现有文件夹
         else:
             try:
-                pool[target] = await self.qq.create_folder(gid, target)
+                fid = await qq.create_folder(gid, target)
+                if not fid:
+                    root2 = await qq.root_files(gid)
+                    fid = {d["name"]: d["folder_id"] for d in norm_folders(root2)}.get(target, "")
+                pool[target] = fid
                 created = True
             except QQFileError as e:
                 yield event.plain_result(f"目标文件夹「{target}」创建失败：{e}")
                 return
         ok, fail, errs = 0, 0, []
-        for t in targets:
-            try:
-                await self.qq.move_file(
-                    gid,
-                    str(t["file_id"]),
-                    target,
-                    target_id=pool.get(target),
-                    current_id=t.get("folder_id") or None,
-                )
-                ok += 1
-            except QQFileError as e:
-                fail += 1
-                errs.append(f"{t['name']}: {e}")
+        async with self.group_lock(gid):
+            for t in targets:
+                try:
+                    await qq.move_file(
+                        gid,
+                        str(t["file_id"]),
+                        target,
+                        target_id=pool.get(target),
+                        current_id=t.get("folder_id") or None,
+                    )
+                    ok += 1
+                    self.audit_now(self._uid(event), gid, "移动", str(t.get("name") or ""), "ok", f"→ {target}")
+                except QQFileError as e:
+                    fail += 1
+                    errs.append(f"{t['name']}: {e}")
+                    self.audit_now(self._uid(event), gid, "移动", str(t.get("name") or ""), "fail", str(e))
         self._invalidate_listing(gid)
-        text = f"📦 已移动 {ok} 个到「{target}」" + (f"（新文件夹，已自动创建）" if created else "")
+        text = f"📦 已移动 {ok} 个到「{target}」" + ("（新文件夹，已自动创建）" if created else "")
         text += f"，失败 {fail} 个" if fail else ""
         if errs:
             text += "\n" + "\n".join(errs[:3])
@@ -938,20 +1093,21 @@ class GroupFileConsole(Star):
         if not gid:
             yield event.plain_result("无法确定群号，请指定：/gf 建 [群号] <文件夹名>")
             return
-        if not self._is_admin_user(event, gid):
-            yield event.plain_result("仅管理员可创建文件夹")
+        if not self.can(event, gid, "move"):
+            yield event.plain_result("没有建文件夹权限（需要 move/delete/admin 角色）")
             return
         name = " ".join(args).strip()
         if not name:
             yield event.plain_result("用法：/gf 建 <文件夹名>")
             return
-        if not self.qq or not self.qq.available:
+        qq = self.client_for(event) or self.qq
+        if not qq or not qq.available:
             yield event.plain_result("OneBot 客户端未就绪，稍后再试")
             return
         # 创建前查重：同名/忽略大小写同名直接拒绝；名称相近给出提示
         similar = ""
         try:
-            root = await self.qq.root_files(gid)
+            root = await qq.root_files(gid)
             pool = {d["name"]: d["folder_id"] for d in norm_folders(root)}
             cands = self._match_folders(pool, name)
             exact = [c for c in cands if c.lower() == name.lower()]
@@ -963,11 +1119,21 @@ class GroupFileConsole(Star):
         except QQFileError:
             pass  # 拉不到文件夹列表时照常尝试创建
         try:
-            fid = await self.qq.create_folder(gid, name)
+            fid = await qq.create_folder(gid, name)
         except QQFileError as e:
             yield event.plain_result(f"创建失败：{e}")
             return
+        if not fid:
+            # 有些协议端成功也不回 folderId：回查根目录确认是否已建好
+            try:
+                root2 = await qq.root_files(gid)
+                fid2 = {d["name"]: d["folder_id"] for d in norm_folders(root2)}.get(name, "")
+                if fid2:
+                    fid = fid2
+            except QQFileError:
+                pass
         self.record_event("建文件夹", "info", f"群 {gid} 创建「{name}」")
+        self.audit_now(self._uid(event), gid, "建文件夹", name, "ok" if fid else "warn")
         text = f"📂 已创建文件夹「{name}」" if fid else f"创建返回异常（可能已存在「{name}」），可用 /gf 列 确认"
         text += similar
         async for r in self._reply(event, text):
@@ -980,10 +1146,11 @@ class GroupFileConsole(Star):
         if not gid:
             yield event.plain_result("无法确定群号，请指定：/gf 整 <群号>")
             return
-        if not self._is_admin_user(event, gid):
-            yield event.plain_result("仅管理员可触发整理")
+        if not self.can(event, gid, "admin"):
+            yield event.plain_result("没有整理权限（需要 admin 角色）")
             return
-        if not self.qq or not self.qq.available:
+        qq = self.client_for(event) or self.qq
+        if not qq or not qq.available:
             yield event.plain_result("OneBot 客户端未就绪，稍后再试")
             return
         report = self.scheduler._format_full_report(await self.scheduler.run_pipeline(gid, manual=True))
@@ -991,6 +1158,48 @@ class GroupFileConsole(Star):
             yield r
 
     # ---- 群管理（仅管理员） ----
+    @groupfile.command("预览", alias={"preview", "试运行"})
+    async def cmd_preview(self, event: AstrMessageEvent) -> None:
+        """预览：整理/时效清理将影响哪些文件（只报告，不动文件）。"""
+        gid, _ = self._parse_args(event)
+        if not gid:
+            yield event.plain_result("无法确定群号，请指定：/gf 预览 <群号>")
+            return
+        if not self.can(event, gid, "admin"):
+            yield event.plain_result("没有预览权限（需要 admin 角色）")
+            return
+        qq = self.client_for(event) or self.qq
+        if not (qq and qq.available):
+            yield event.plain_result("OneBot 客户端未就绪")
+            return
+        try:
+            async with self.group_lock(gid):
+                plan = await self.scheduler.preview_cleanup(gid)
+                ttl = await self.scheduler.preview_ttl(gid)
+        except QQFileError as e:
+            yield event.plain_result(f"读取失败：{e}")
+            return
+        lines = [
+            f"👁 群 {gid} 试运行（不会动文件）",
+            f"· 分类：共 {plan.get('total', 0)} 个文件；将移动 {len(plan.get('planned') or [])} 个；"
+            f"已在目标 {plan.get('in_place', 0)}；无规则 {plan.get('no_match', 0)}",
+        ]
+        for p in (plan.get("planned") or [])[:5]:
+            lines.append(f"  → {p.get('name')}：{p.get('from')} → {p.get('to')}")
+        if ttl.get("enabled"):
+            lines.append(
+                f"· 时效：超龄 {ttl.get('over', 0)} 个；无时间 {ttl.get('unknown_time', 0)} 个"
+                + ("（扫描已截断）" if ttl.get("truncated") else "")
+            )
+            for p in (ttl.get("planned") or [])[:5]:
+                lines.append(
+                    f"  {p.get('action')} {p.get('name')}（{p.get('age_days')} 天 / 阈值 {p.get('days')} 天）"
+                )
+        else:
+            lines.append("· 时效：未启用")
+        async for r in self._reply(event, "\n".join(lines)):
+            yield r
+
     @groupfile.command("绑", alias={"绑定", "bind"})
     async def cmd_bind(self, event: AstrMessageEvent) -> None:
         """绑：把当前群（或指定群号）纳入管理，可跟备注名。"""
@@ -998,7 +1207,7 @@ class GroupFileConsole(Star):
         if not gid:
             yield event.plain_result("用法：群聊中 /gf 绑 [备注名]；私聊中 /gf 绑 <群号> [备注名]")
             return
-        if not self._is_admin_user(event, gid):
+        if not self.can(event, gid, "admin"):
             yield event.plain_result("仅管理员可绑定群")
             return
         name = " ".join(args).strip()
@@ -1016,13 +1225,13 @@ class GroupFileConsole(Star):
         if not gid:
             yield event.plain_result("无法确定群号，请指定：/gf 解 <群号>")
             return
-        if not self._is_admin_user(event, gid):
+        if not self.can(event, gid, "admin"):
             yield event.plain_result("仅管理员可解绑")
             return
         if str(gid) not in self.store.groups:
             yield event.plain_result("该群未绑定，无需解绑")
             return
-        self._pending[self._uid(event)] = {"action": "unbind", "gid": str(gid), "ts": time.time()}
+        self._pending[self._pending_key(event, str(gid))] = {"action": "unbind", "gid": str(gid), "ts": time.time()}
         text = f"⚠ 解绑将删除群 {gid} 的全部配置（规则/定时/时效/管理员）。\n60 秒内 /gf 确认 执行；/gf 取消 放弃"
         async for r in self._reply(event, text):
             yield r
@@ -1034,7 +1243,7 @@ class GroupFileConsole(Star):
         if not gid:
             yield event.plain_result("无法确定群号，请指定：/gf 开 <群号>")
             return
-        if not self._is_admin_user(event, gid):
+        if not self.can(event, gid, "admin"):
             yield event.plain_result("仅管理员可操作")
             return
         self.store.upsert_group(gid, {"enabled": True})
@@ -1049,7 +1258,7 @@ class GroupFileConsole(Star):
         if not gid:
             yield event.plain_result("无法确定群号，请指定：/gf 关 <群号>")
             return
-        if not self._is_admin_user(event, gid):
+        if not self.can(event, gid, "admin"):
             yield event.plain_result("仅管理员可操作")
             return
         self.store.upsert_group(gid, {"enabled": False})
@@ -1064,7 +1273,7 @@ class GroupFileConsole(Star):
         if not gid:
             yield event.plain_result("群聊中使用：/gf 管 @某人（添加）/gf 管 删 @某人（移除）")
             return
-        if not self._is_admin_user(event, gid):
+        if not self.can(event, gid, "admin"):
             yield event.plain_result("仅管理员可管理该群的管理员名单")
             return
         at_ids: list[str] = []
@@ -1103,60 +1312,172 @@ class GroupFileConsole(Star):
     # ---- 两段式确认 ----
     @groupfile.command("确认", alias={"yes", "ok"})
     async def cmd_confirm(self, event: AstrMessageEvent) -> None:
-        """确认：执行待确认操作（删/解）。"""
-        uid = self._uid(event)
-        p = self._pending.get(uid)
-        if not p or time.time() - p.get("ts", 0) > PENDING_TTL:
-            self._pending.pop(uid, None)
-            yield event.plain_result("没有待确认的操作（60 秒内有效）")
+        """确认：执行待确认操作（删/解）；必须在本群确认。"""
+        gid, _ = self._parse_args(event)
+        if not gid:
+            yield event.plain_result("无法确定群号，请在本群回复 /gf 确认（私聊请带群号）")
             return
-        action, gid = p.get("action"), p.get("gid")
+        key = self._pending_key(event, gid)
+        p = self._pending.get(key)
+        if not p or time.time() - p.get("ts", 0) > PENDING_TTL:
+            self._pending.pop(key, None)
+            yield event.plain_result("没有待确认的操作（60 秒内有效，且需在同一群确认）")
+            return
+        action, pgid = p.get("action"), p.get("gid")
         try:
             if action == "delete":
-                if not self._is_admin_user(event, gid):
+                if not self.can(event, pgid, "delete"):
                     yield event.plain_result("权限已变化，取消本次删除")
                     return
-                if not (self.qq and self.qq.available):
+                qq = self.client_for(event) or self.qq
+                if not (qq and qq.available):
                     yield event.plain_result("OneBot 客户端未就绪，删除未执行")
                     return
                 ok, fail, errs = 0, 0, []
-                for t in p.get("targets") or []:
-                    try:
-                        await self.qq.delete_file(
-                            gid,
-                            t.get("folder_id") or None,
-                            str(t["file_id"]),
-                            busid=t.get("busid") or 0,
-                        )
-                        ok += 1
-                    except Exception as e:
-                        fail += 1
-                        errs.append(f"{t.get('name')}: {e}")
-                self._invalidate_listing(gid)
+                async with self.group_lock(pgid):
+                    for t in p.get("targets") or []:
+                        try:
+                            await qq.delete_file(
+                                pgid,
+                                t.get("folder_id") or None,
+                                str(t["file_id"]),
+                                busid=t.get("busid") or 0,
+                            )
+                            ok += 1
+                            self.audit_now(self._uid(event), pgid, "删除", str(t.get("name") or t.get("file_id")), "ok")
+                        except Exception as e:
+                            fail += 1
+                            errs.append(f"{t.get('name')}: {e}")
+                            self.audit_now(self._uid(event), pgid, "删除", str(t.get("name") or ""), "fail", str(e))
+                self._invalidate_listing(pgid)
                 text = f"🗑 删除完成：成功 {ok} 个，失败 {fail} 个"
                 if errs:
                     text += "\n" + "\n".join(errs[:5])
-                self.record_event("删除", "info" if not fail else "warn", f"群 {gid} 命令删除 {ok}/{ok + fail}")
+                self.record_event("删除", "info" if not fail else "warn", f"群 {pgid} 命令删除 {ok}/{ok + fail}")
             elif action == "unbind":
-                self.store.remove_group(gid)
-                self._invalidate_listing(gid)
-                text = f"✅ 已解绑群 {gid}（配置已删除）"
-                self.record_event("解绑", "info", f"群 {gid} 已解绑")
+                if not self.can(event, pgid, "admin"):
+                    yield event.plain_result("权限已变化，取消本次解绑")
+                    return
+                self.store.remove_group(pgid)
+                self._invalidate_listing(pgid)
+                text = f"✅ 已解绑群 {pgid}（配置已删除）"
+                self.record_event("解绑", "info", f"群 {pgid} 已解绑")
+                self.audit_now(self._uid(event), pgid, "解绑", pgid, "ok")
             else:
                 text = "未知操作类型，已取消"
         finally:
-            self._pending.pop(uid, None)
+            self._pending.pop(key, None)
         async for r in self._reply(event, text):
             yield r
 
     @groupfile.command("取消", alias={"no", "cancel"})
     async def cmd_cancel(self, event: AstrMessageEvent) -> None:
-        """取消：放弃待确认操作。"""
-        uid = self._uid(event)
-        if self._pending.pop(uid, None):
+        """取消：放弃本群的待确认操作。"""
+        gid, _ = self._parse_args(event)
+        key = self._pending_key(event, gid) if gid else ""
+        if key and self._pending.pop(key, None):
             yield event.plain_result("已取消本次操作")
         else:
             yield event.plain_result("没有待确认的操作")
+
+    # ---- 运维查询（v2.8.0） ----
+    @groupfile.command("任务", alias={"tasks", "进度"})
+    async def cmd_tasks(self, event: AstrMessageEvent) -> None:
+        """任务：查看后台任务进度（整理/查重/扫描/发文件）。"""
+        rows = self.tasks.list(10)
+        if not rows:
+            yield event.plain_result("暂无任务记录。面板「任务」页可发起整理/查重/扫描。")
+            return
+        lines = ["🧵 最近任务："]
+        for t in rows[:10]:
+            lines.append(
+                f"· [{t.get('status')}] {t.get('kind')} 群{t.get('group')} "
+                f"{t.get('progress', 0)}% {t.get('message', '')}"
+            )
+        async for r in self._reply(event, "\n".join(lines)):
+            yield r
+
+    @groupfile.command("审计", alias={"audit", "日志"})
+    async def cmd_audit(self, event: AstrMessageEvent) -> None:
+        """审计：查看本群最近操作记录（仅 admin）。"""
+        gid, args = self._parse_args(event)
+        if not gid or not self.can(event, gid, "admin"):
+            yield event.plain_result("仅 admin 可查看审计日志")
+            return
+        n = int(args[0]) if args and args[0].isdigit() else 10
+        rows = self.audit.read(min(max(n, 1), 50), gid)
+        if not rows:
+            yield event.plain_result("暂无审计记录（或审计已关闭）。")
+            return
+        lines = [f"📜 群 {gid} 最近 {len(rows)} 条审计："]
+        for r_ in rows:
+            mark = "✅" if r_.get("result") == "ok" else "⚠"
+            lines.append(f"{mark} [{r_.get('t')}] {r_.get('actor')} {r_.get('action')} {r_.get('target')} {r_.get('detail')}")
+        async for x in self._reply(event, "\n".join(lines)):
+            yield x
+
+    @groupfile.command("回收", alias={"recycle", "回收站"})
+    async def cmd_recycle(self, event: AstrMessageEvent) -> None:
+        """回收：查看 TTL 移入回收站的文件；/gf 恢复 <序号> 还原。"""
+        gid, _ = self._parse_args(event)
+        if not gid:
+            yield event.plain_result("无法确定群号")
+            return
+        rows = self.recycle_store.list(gid, 20)
+        if not rows:
+            yield event.plain_result("回收站为空（TTL 动作设「移入回收」后才会记录）。")
+            return
+        lines = [f"♻ 群 {gid} 回收站 {len(rows)} 条（/gf 恢复 <序号>）："]
+        for i, it in enumerate(rows, 1):
+            lines.append(
+                f"{i}. {it.get('name')}（原位置 {it.get('from_label') or '根目录'}）"
+                f" {time.strftime('%m-%d %H:%M', time.localtime(int(it.get('ts') or 0)))}"
+            )
+        async for r in self._reply(event, "\n".join(lines)):
+            yield r
+
+    @groupfile.command("恢复", alias={"restore", "还原"})
+    async def cmd_restore(self, event: AstrMessageEvent) -> None:
+        """恢复：从回收站还原第 N 个文件到原文件夹（仅 admin）。"""
+        gid, args = self._parse_args(event)
+        if not gid or not self.can(event, gid, "admin"):
+            yield event.plain_result("仅 admin 可还原")
+            return
+        if not args or not args[0].isdigit():
+            yield event.plain_result("用法：/gf 回收 查看列表，再 /gf 恢复 <序号>")
+            return
+        rows = self.recycle_store.list(gid, 100)
+        idx = int(args[0])
+        if not (1 <= idx <= len(rows)):
+            yield event.plain_result(f"序号超范围（共 {len(rows)} 条）")
+            return
+        item = rows[idx - 1]
+        qq = self.client_for(event) or self.qq
+        if not (qq and qq.available):
+            yield event.plain_result("OneBot 客户端未就绪")
+            return
+        top = str(item.get("from_label") or "").strip().lstrip("/").split("/")[0]
+        try:
+            async with self.group_lock(gid):
+                if not top or top == "根目录":
+                    await qq.move_file(gid, str(item.get("file_id")), "/", target_id=None, current_id=None)
+                else:
+                    root = await qq.root_files(gid)
+                    pool = {d["name"]: d["folder_id"] for d in norm_folders(root)}
+                    cands = self._match_folders(pool, top)
+                    if not cands:
+                        yield event.plain_result(f"原文件夹「{top}」已不存在，无法还原")
+                        return
+                    await qq.move_file(
+                        gid, str(item.get("file_id")), cands[0], target_id=pool.get(cands[0]), current_id=None
+                    )
+        except QQFileError as e:
+            yield event.plain_result(f"还原失败：{e}")
+            return
+        self.recycle_store.remove(str(item.get("id")))
+        self.audit_now(self._uid(event), gid, "回收站还原", str(item.get("name")), "ok")
+        async for r in self._reply(event, f"♻ 已还原「{item.get('name')}」到 {top or '根目录'}"):
+            yield r
 
     # ---- 内部工具 ----
     def _parse_args(self, event: AstrMessageEvent) -> tuple[str, list[str]]:
@@ -1183,17 +1504,23 @@ class GroupFileConsole(Star):
                 return
         yield event.chain_result([Comp.Plain(text)])
 
-    async def _download_file(self, gid: str, f: dict) -> tuple[Path | None, str]:
+    async def _download_file(
+        self,
+        gid: str,
+        f: dict,
+        client: QQFileClient | None = None,
+        progress=None,
+    ) -> tuple[Path | None, str]:
         """下载群文件到「发送临时目录」（流式下载 + 文件名消毒 + 大小上限）。
 
-        v2.7.0：默认目录改为共享 temp（协议端能 realpath），可用面板/配置覆盖；
-        发送由调用方交给事件链或直接 OneBot 发送，产物由 _schedule_cleanup 延迟清理。
+        v2.8.0：可按事件平台传 client；progress(pct,msg) 供任务中心显示进度。
         """
-        if not (self.qq and self.qq.available):
+        qq = client or self.qq
+        if not (qq and qq.available):
             return None, "OneBot 客户端未就绪"
         dest = None
         try:
-            url = await self.qq.file_download_url(gid, str(f["file_id"]), int(f.get("busid") or 0))
+            url = await qq.file_download_url(gid, str(f["file_id"]), int(f.get("busid") or 0))
             if not url:
                 return None, "获取下载链接失败（get_group_file_url 返回空）"
             # 文件名消毒：只保留基本名，剥掉任何路径成分
@@ -1203,6 +1530,9 @@ class GroupFileConsole(Star):
             import httpx
 
             size = 0
+            mark = 0
+            if progress:
+                progress(5, f"下载「{name}」")
             async with httpx.AsyncClient(follow_redirects=True, timeout=120) as hc:
                 async with hc.stream("GET", url) as resp:
                     resp.raise_for_status()
@@ -1214,7 +1544,12 @@ class GroupFileConsole(Star):
                                     f"文件超过发送上限（{SEND_MAX_BYTES / 1024 / 1024:.0f}MB）"
                                 )
                             fh.write(chunk)
+                            if progress and size - mark >= 5 * 1024 * 1024:
+                                mark = size
+                                progress(min(80, 10 + size // (10 * 1024 * 1024)), f"已下载 {size / 1024 / 1024:.0f}MB")
             self._ensure_readable(dest)
+            if progress:
+                progress(85, "下载完成，准备发送")
             return dest, ""
         except Exception as e:
             if dest is not None:
@@ -1265,6 +1600,11 @@ class GroupFileConsole(Star):
                 "groups": len(self.store.group_ids()),
                 "umi": list(self.umo_cache.keys()),
                 "send_tmp": self.send_dir_info(),
+                "platform_id": self.platform_id,
+                "tasks": self.tasks.stats(),
+                "audit": self.audit.stats(),
+                "recycle": self.recycle_store.stats(),
+                "version_full": VERSION,
             }
         )
 
@@ -1321,7 +1661,9 @@ class GroupFileConsole(Star):
             if k in payload:
                 patch[k] = payload[k]
         cfg = self.store.upsert_group(gid, patch)
-        return json_response({"saved": True, "group": dict(cfg, group_id=gid)})
+        return json_response(
+            {"saved": True, "group": dict(cfg, group_id=gid), "warnings": self.store.last_warnings}
+        )
 
     async def api_group_delete(self):
         from astrbot.api.web import error_response, json_response, request
@@ -1449,6 +1791,23 @@ class GroupFileConsole(Star):
             return error_response(f"读取群文件失败: {e}", status_code=502)
         return json_response(result)
 
+    async def api_ttl_preview(self):
+        """试运行时效清理：只算哪些文件会被回收/删除，不动文件。"""
+        from astrbot.api.web import error_response, json_response, request
+
+        payload = await request.json(default={})
+        gid = str(payload.get("group_id", "") or self._q("gid")).strip()
+        if not gid:
+            return error_response("缺少 group_id", status_code=400)
+        if not (self.qq and self.qq.available):
+            return error_response("OneBot 客户端未就绪", status_code=503)
+        try:
+            async with self.group_lock(gid):
+                result = await self.scheduler.preview_ttl(gid)
+        except QQFileError as e:
+            return error_response(f"读取群文件失败: {e}", status_code=502)
+        return json_response(result)
+
     async def _capacity_check(self, gid: str) -> dict[str, Any]:
         """容量检查共用逻辑（WebUI「立即检查一次」/旧版报告用）：文件数 / 占用 / 告警。"""
         info = await self.qq.file_system_info(gid)
@@ -1487,6 +1846,7 @@ class GroupFileConsole(Star):
             return error_response("OneBot 客户端未就绪", status_code=503)
         try:
             d = await self._capacity_check(gid)
+            self.trend.sample(gid, int(d.get("used_gb", 0) * GB), int(d.get("total_gb", 0) * GB), int(d.get("file_count", 0)))
         except QQFileError as e:
             return error_response(f"读取容量失败: {e}", status_code=400)
         return json_response({
@@ -1539,29 +1899,224 @@ class GroupFileConsole(Star):
         info = await self.cleanup_sweep(force=True)
         return json_response({"ok": True, **info, "state": self.send_dir_info()})
 
+    # ================= 任务 / 审计 / 回收站（v2.8.0） =================
+    async def api_task_start(self):
+        """提交后台任务：cleanup / dupes / scan / send_file。"""
+        from astrbot.api.web import error_response, json_response, request
+
+        payload = await request.json(default={})
+        kind = str(payload.get("kind") or "").strip()
+        gid = str(payload.get("group_id") or self._q("gid")).strip()
+        actor = str(payload.get("actor") or "panel")
+        if kind not in ("cleanup", "dupes", "scan", "send_file"):
+            return error_response("kind 必须是 cleanup/dupes/scan/send_file", status_code=400)
+        if not gid:
+            return error_response("缺少 group_id", status_code=400)
+        if not (self.qq and self.qq.available):
+            return error_response("OneBot 客户端未就绪", status_code=503)
+
+        async def run_cleanup(progress):
+            progress(10, "开始整理")
+            result = await self.scheduler.run_pipeline(gid, manual=True)
+            progress(95, "整理完成")
+            return result
+
+        async def run_dupes(progress):
+            async with self.group_lock(gid):
+                progress(10, "扫描重复文件")
+                rows = await self._find_dupe_groups(gid)
+                progress(95, f"发现 {len(rows)} 组重复")
+                return {"groups": rows}
+
+        async def run_scan(progress):
+            async with self.group_lock(gid):
+                progress(10, "扫描群文件")
+                files = await self._collect_files(gid)
+                progress(95, f"扫描到 {len(files)} 个文件")
+                return {"files": files, "scan": getattr(self, "last_scan", {})}
+
+        async def run_send(progress):
+            file_id = str(payload.get("file_id") or "").strip()
+            if not file_id:
+                raise ValueError("缺少 file_id")
+            f = {
+                "file_id": file_id,
+                "folder_id": payload.get("folder_id") or "",
+                "busid": int(payload.get("busid") or 0),
+                "name": payload.get("name") or "file",
+                "size": int(payload.get("size") or 0),
+            }
+            dest, err = await self._download_file(gid, f, self.qq, progress)
+            if dest is None:
+                raise ValueError(err)
+            self._ensure_readable(dest)
+            self._mark_inflight(dest)
+            try:
+                progress(90, "上传到群")
+                await asyncio.wait_for(
+                    self.qq.call(
+                        "send_group_msg",
+                        group_id=int(gid),
+                        message=[{"type": "file", "data": {"file": str(dest), "name": f["name"]}}],
+                    ),
+                    timeout=180,
+                )
+            finally:
+                self._unmark_inflight(dest)
+            try:
+                dest.unlink(missing_ok=True)
+            except Exception:
+                pass
+            self.audit_now(actor, gid, "发文件", str(f["name"]), "ok")
+            progress(100, "发送完成")
+            return {"name": f["name"]}
+
+        runners = {"cleanup": run_cleanup, "dupes": run_dupes, "scan": run_scan, "send_file": run_send}
+        tid = self.tasks.start(kind, gid, actor, runners[kind])
+        self.audit_now(actor, gid, f"提交任务:{kind}", tid, "ok")
+        return json_response({"ok": True, "task_id": tid})
+
+    async def api_tasks(self):
+        from astrbot.api.web import json_response
+
+        limit = vint(self._q("limit", "50"), 50, 1, 200)
+        return json_response({"tasks": self.tasks.list(limit), "stats": self.tasks.stats()})
+
+    async def api_task_cancel(self):
+        from astrbot.api.web import error_response, json_response, request
+
+        payload = await request.json(default={})
+        tid = str(payload.get("id") or self._q("id")).strip()
+        if not tid:
+            return error_response("缺少 id", status_code=400)
+        ok = self.tasks.cancel(tid)
+        return json_response({"cancelled": ok, "task": self.tasks.get(tid)})
+
+    async def api_audit(self):
+        from astrbot.api.web import json_response
+
+        limit = vint(self._q("limit", "100"), 100, 1, 1000)
+        gid = self._q("gid")
+        action = self._q("action")
+        return json_response(
+            {
+                "rows": self.audit.read(limit, gid, action),
+                "stats": self.audit.stats(),
+                "enabled": self.store.get_ops().get("audit_enabled", True),
+            }
+        )
+
+    async def api_ops_get(self):
+        from astrbot.api.web import json_response
+
+        return json_response(
+            {"ops": self.store.get_ops(), "audit": self.audit.stats(), "recycle": self.recycle_store.stats()}
+        )
+
+    async def api_trend(self):
+        from astrbot.api.web import json_response
+
+        gid = self._q("gid")
+        days = vint(self._q("days", "14"), 14, 1, 120)
+        series = self.trend.series(gid, days) if gid else []
+        return json_response({"gid": gid, "days": days, "series": series, "stats": self.trend.stats()})
+
+    async def api_ops_set(self):
+        from astrbot.api.web import json_response, request
+
+        payload = await request.json(default={})
+        ops = self.store.set_ops(payload if isinstance(payload, dict) else {})
+        self.audit_now("panel", "", "保存运维设置", "", "ok", json.dumps(ops, ensure_ascii=False)[:200])
+        return json_response({"saved": True, "ops": ops})
+
+    async def api_recycle(self):
+        from astrbot.api.web import json_response
+
+        gid = self._q("gid")
+        limit = vint(self._q("limit", "100"), 100, 1, 500)
+        return json_response(
+            {"items": self.recycle_store.list(gid, limit), "stats": self.recycle_store.stats()}
+        )
+
+    async def api_recycle_restore(self):
+        """从回收站还原：按记录的原文件夹名找回 folder_id 再 move 回去。"""
+        from astrbot.api.web import error_response, json_response, request
+
+        payload = await request.json(default={})
+        item_id = str(payload.get("id") or "").strip()
+        if not item_id:
+            return error_response("缺少 id", status_code=400)
+        item = self.recycle_store.get(item_id)
+        if not item:
+            return error_response("回收站记录不存在", status_code=404)
+        gid = str(item.get("group") or "")
+        if not (self.qq and self.qq.available):
+            return error_response("OneBot 客户端未就绪", status_code=503)
+        target_label = str(item.get("from_label") or "").strip().lstrip("/")
+        top = target_label.split("/")[0] if target_label else ""
+        try:
+            async with self.group_lock(gid):
+                if not top or top == "根目录":
+                    await self.qq.move_file(
+                        gid, str(item.get("file_id")), "/", target_id=None, current_id=None
+                    )
+                else:
+                    root = await self.qq.root_files(gid)
+                    pool = {d["name"]: d["folder_id"] for d in norm_folders(root)}
+                    cands = self._match_folders(pool, top)
+                    if not cands:
+                        return error_response(f"原文件夹「{top}」已不存在，无法还原", status_code=409)
+                    await self.qq.move_file(
+                        gid,
+                        str(item.get("file_id")),
+                        cands[0],
+                        target_id=pool.get(cands[0]),
+                        current_id=None,
+                    )
+        except QQFileError as e:
+            self.audit_now("panel", gid, "回收站还原", str(item.get("name")), "fail", str(e))
+            return error_response(str(e), status_code=502)
+        self.recycle_store.remove(item_id)
+        self.audit_now("panel", gid, "回收站还原", str(item.get("name")), "ok", f"→ {target_label or '根目录'}")
+        return json_response({"ok": True})
+
+    async def api_recycle_delete(self):
+        from astrbot.api.web import json_response
+
+        removed = self.recycle_store.prune(self.store.get_ops().get("recycle_keep_days", 30))
+        return json_response({"removed": removed, "stats": self.recycle_store.stats()})
+
     async def api_files(self):
         from astrbot.api.web import error_response, json_response
 
         gid = self._q("gid")
         folder_id = self._q("folder_id") or None
+        page = vint(self._q("page", "1"), 1, 1, 10000)
+        page_size = vint(self._q("page_size", "50"), 50, 10, 200)
         if not gid:
             return error_response("缺少 gid", status_code=400)
-        if not self.qq:
+        if not (self.qq and self.qq.available):
             return error_response("OneBot 客户端未就绪", status_code=503)
         try:
+            data = await list_folder(self.qq, gid, folder_id or "")
+            all_folders = data["folders"]
             if folder_id:
-                raw = await self.qq.files_by_folder(gid, folder_id)
-            else:
-                raw = await self.qq.root_files(gid)
-            root = await self.qq.root_files(gid)
+                all_folders = norm_folders(await self.qq.root_files(gid))
         except QQFileError as e:
             return error_response(str(e), status_code=502)
+        files = data["files"]
+        total = len(files)
+        start = (page - 1) * page_size
         return json_response(
             {
-                "files": norm_files(raw),
-                "folders": norm_folders(raw),
-                "all_folders": norm_folders(root),
+                "files": files[start : start + page_size],
+                "folders": data["folders"],
+                "all_folders": all_folders,
                 "folder_id": folder_id or "",
+                "page": page,
+                "page_size": page_size,
+                "total": total,
+                "pages": max(1, (total + page_size - 1) // page_size),
             }
         )
 
@@ -1580,7 +2135,10 @@ class GroupFileConsole(Star):
         all_in_folder = bool(payload.get("all_in_folder"))
         if all_in_folder:
             try:
-                raw = await self.qq.files_by_folder(gid, folder_id)
+                if folder_id:
+                    raw = await self.qq.files_by_folder(gid, folder_id)
+                else:
+                    raw = await self.qq.root_files(gid)
                 file_ids = [f["file_id"] for f in norm_files(raw)]
             except QQFileError as e:
                 return error_response(str(e), status_code=502)
@@ -1596,15 +2154,18 @@ class GroupFileConsole(Star):
             return error_response("没有要删除的文件", status_code=400)
         ok, fail = 0, 0
         details = []
-        for fid, f_folder, f_busid, f_name in targets:
-            try:
-                await self.qq.delete_file(gid, f_folder, fid, busid=f_busid)
-                ok += 1
-                details.append({"file_id": fid, "name": f_name, "ok": True})
-            except Exception as e:
-                fail += 1
-                logger.warning(f"[WebUI删除] 群 {gid} 文件 {f_name}({fid}) 删除失败: {e}")
-                details.append({"file_id": fid, "name": f_name, "ok": False, "err": str(e)})
+        async with self.group_lock(gid):
+            for fid, f_folder, f_busid, f_name in targets:
+                try:
+                    await self.qq.delete_file(gid, f_folder, fid, busid=f_busid)
+                    ok += 1
+                    details.append({"file_id": fid, "name": f_name, "ok": True})
+                    self.audit_now("panel", gid, "删除", f_name, "ok")
+                except Exception as e:
+                    fail += 1
+                    logger.warning(f"[WebUI删除] 群 {gid} 文件 {f_name}({fid}) 删除失败: {e}")
+                    details.append({"file_id": fid, "name": f_name, "ok": False, "err": str(e)})
+                    self.audit_now("panel", gid, "删除", f_name, "fail", str(e))
         return json_response({"deleted": ok, "failed": fail, "details": details})
 
     async def api_move(self):
@@ -1623,19 +2184,24 @@ class GroupFileConsole(Star):
         if not file_ids or not (target_name or target_id):
             return error_response("缺少 file_ids 或 target_folder_name", status_code=400)
         ok, fail = 0, 0
-        for fid in file_ids:
-            try:
-                await self.qq.move_file(
-                    gid,
-                    str(fid),
-                    target_name or target_id,
-                    target_id=target_id,
-                    current_id=current_id,
-                )
-                ok += 1
-            except QQFileError:
-                fail += 1
-        return json_response({"moved": ok, "failed": fail})
+        errs: list[str] = []
+        async with self.group_lock(gid):
+            for fid in file_ids:
+                try:
+                    await self.qq.move_file(
+                        gid,
+                        str(fid),
+                        target_name or target_id,
+                        target_id=target_id,
+                        current_id=current_id,
+                    )
+                    ok += 1
+                except QQFileError as e:
+                    fail += 1
+                    errs.append(str(e))
+        self.audit_now("panel", gid, "移动", f"{ok} 个文件", "ok" if not fail else "warn",
+                       f"→ {target_name or target_id}" + (f"；失败 {fail}" if fail else ""))
+        return json_response({"moved": ok, "failed": fail, "errors": errs[:5]})
 
     async def api_members(self):
         """返回该群成员列表，供管理员下拉选择（不用手输 QQ）。"""
@@ -1660,28 +2226,16 @@ class GroupFileConsole(Star):
                 members.append({"user_id": uid, "name": name})
         return json_response({"members": members})
 
-    async def _collect_files(self, gid: str) -> list[dict]:
-        """递归收集根目录 + 所有层级子文件夹的文件，每项含 folder 路径与 folder_id。"""
-        out: list[dict] = []
-
-        async def walk(folder_id: str, label: str) -> None:
-            try:
-                raw = (
-                    await self.qq.files_by_folder(gid, folder_id)
-                    if folder_id
-                    else await self.qq.root_files(gid)
-                )
-                if not isinstance(raw, dict):
-                    return
-                for f in norm_files(raw):
-                    out.append({**f, "folder": label, "folder_id": folder_id or ""})
-                for fd in norm_folders(raw):
-                    await walk(fd["folder_id"], f"{label}/{fd['name']}")
-            except Exception as e:  # 单个子文件夹读失败不拖垮整个扫描
-                logger.warning(f"[扫描] 群 {gid} 读取 {label} 失败，已跳过: {e}")
-
-        await walk("", "根目录")
-        return out
+    async def _collect_files(self, gid: str, client: QQFileClient | None = None) -> list[dict]:
+        """递归收集（v2.8.0 统一走 scanner，带深度/数量/环保护）。"""
+        res = await walk_files(client or self.qq, gid)
+        self.last_scan = {
+            "truncated": res.get("truncated", False),
+            "errors": res.get("errors") or [],
+            "folders_seen": res.get("folders_seen", 0),
+            "files": len(res.get("files") or []),
+        }
+        return res.get("files") or []
 
     async def api_scan(self):
         """扫描群文件：递归根目录 + 所有层级子文件夹，供前端生成分类规则。"""
@@ -2054,12 +2608,15 @@ class GroupFileConsole(Star):
         gid = str(payload.get("group_id", "") or self._q("gid")).strip()
         if not gid:
             return error_response("缺少 group_id", status_code=400)
-        if not self.qq:
+        if not (self.qq and self.qq.available):
             return error_response("OneBot 客户端未就绪", status_code=503)
         try:
-            stats = await self.scheduler.run_cleanup(gid, notify=True)
+            async with self.group_lock(gid):
+                stats = await self.scheduler.run_cleanup(gid, notify=True)
         except Exception as e:
             return error_response(str(e), status_code=502)
+        self.audit_now("panel", gid, "手动分类", "", "ok" if not stats.get("failed") else "warn",
+                       f"移动 {stats.get('moved', 0)} / 失败 {stats.get('failed', 0)}")
         return json_response(stats)
 
     async def api_create_folder(self):
@@ -2076,6 +2633,9 @@ class GroupFileConsole(Star):
             return error_response("OneBot 客户端未就绪", status_code=503)
         try:
             fid = await self.qq.create_folder(gid, folder_name)
+            if not fid:
+                root = await self.qq.root_files(gid)
+                fid = {d["name"]: d["folder_id"] for d in norm_folders(root)}.get(folder_name, "")
         except QQFileError as e:
             return error_response(str(e), status_code=502)
         return json_response({"created": bool(fid), "folder_id": fid, "name": folder_name})
