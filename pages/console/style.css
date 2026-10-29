@@ -730,3 +730,20 @@ input[type="checkbox"]:disabled{opacity:.45;cursor:not-allowed}
 /* 行内小号场景（表格/文件行）微缩 */
 .file-item input[type="checkbox"],td input[type="checkbox"]{width:15px;height:15px;min-width:15px}
 .file-item input[type="checkbox"]:checked::after,td input[type="checkbox"]:checked::after{left:4.5px;top:1.4px;width:3.8px;height:7.6px}
+
+/* v2.8.0 响应式与审计页工具栏 */
+#a-group,#a-action{flex:1 1 160px;min-width:140px}
+#tr-group{flex:0 1 240px}
+@media (max-width: 900px){
+  .container{padding:10px}
+  .tabs{flex-wrap:wrap;gap:4px}
+  .status-cards{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .form-grid{grid-template-columns:1fr}
+  .toolbar{flex-wrap:wrap}
+  .toolbar input,.toolbar select{flex:1 1 140px}
+  .brand{padding:10px 12px}
+  .brand h1{font-size:17px}
+  .tab-btn{padding:7px 9px}
+  .rules-row .row{gap:6px}
+  .help-pre{font-size:12px}
+}

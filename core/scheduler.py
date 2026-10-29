@@ -11,12 +11,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from .cron import CronExpr
 from .config import GroupConfigStore
-from .qqfile import QQFileClient, QQFileError, norm_files, norm_folders
+from .qqfile import QQFileClient, QQFileError, norm_folders
+from .scanner import walk_files
 
 logger = logging.getLogger("gfc_scheduler")
 
@@ -39,6 +40,32 @@ class CleanupScheduler:
     @property
     def client(self) -> QQFileClient | None:
         return self.plugin.qq
+
+    def _record_recycle(self, gid: str, f: dict[str, Any], label: str, recycle_name: str) -> None:
+        store = getattr(self.plugin, "recycle_store", None)
+        if not store:
+            return
+        try:
+            store.add(
+                group=gid,
+                file_id=str(f.get("file_id") or ""),
+                name=str(f.get("name") or ""),
+                size=int(f.get("size") or 0),
+                from_label=label or "根目录",
+                from_folder_id=str(f.get("folder_id") or ""),
+                recycle_folder=recycle_name,
+                actor="system",
+            )
+        except Exception:
+            pass
+
+    def _audit(self, actor: str, gid: str, action: str, target: str = "", result: str = "ok", detail: str = "") -> None:
+        fn = getattr(self.plugin, "audit_now", None)
+        if callable(fn):
+            try:
+                fn(actor, gid, action, target, result, detail)
+            except Exception:
+                pass
 
     async def run(self) -> None:
         logger.info("[群管理] 定时任务已启动")
@@ -75,32 +102,61 @@ class CleanupScheduler:
             # 时效策略启用但分类未配置时，挂在默认每日 3 点兜底
             if ttl_cfg.get("enabled") and not crones:
                 crones = ["0 3 * * *"]
-            due = any(CronExpr(str(c)).match(now.minute, now.hour, now.day, now.month, now.weekday()) for c in crones)
+            due_now = any(CronExpr(str(c)).match(now.minute, now.hour, now.day, now.month, now.weekday()) for c in crones)
+            due = due_now
+            catchup = int(cleanup.get("catchup_minutes") or 0)
+            if not due and catchup > 0 and crones:
+                # 补跑：重启/卡顿错过的 cron，在最近 N 分钟内发生过就补一次
+                last_run = float(cfg.get("last_run") or 0)
+                for m in range(1, min(catchup, 1440) + 1):
+                    t = now - timedelta(minutes=m)
+                    if t.timestamp() <= last_run:
+                        break
+                    if any(CronExpr(str(c)).match(t.minute, t.hour, t.day, t.month, t.weekday()) for c in crones):
+                        due = True
+                        self._audit("system", gid, "补跑", result="ok", detail=f"错过 {t.strftime('%H:%M')}，已补一次")
+                        break
             if not due:
                 continue
             if self._last_fire.get(gid) == fire_key:
                 continue  # 同一分钟已触发过（TICK 抖动/多循环残留保护）
             self._last_fire[gid] = fire_key
             await self.run_pipeline(gid, notify=True)
+            self.store.touch_last_run(gid)
 
     # ================= 流水线 =================
     async def run_pipeline(self, gid: str, notify: bool = False, manual: bool = False) -> dict[str, Any]:
-        """完整流水线：分类 → 时效 → 容量。manual=True 时容量超限不消耗当日播报额度。"""
-        stats = await self.run_cleanup(gid, notify=False)
-        ttl_stats = await self.run_ttl_scan(gid)
-        cap_line = await self.capacity_followup(gid, force=manual)
-        result = {**stats, "ttl": ttl_stats, "capacity": cap_line}
-        if notify:
-            report = self._format_full_report(result)
-            if self._report_worth(result):
-                await self.plugin.notify_group(gid, report)
-        self.plugin.record_event(
-            "流水线",
-            "info" if stats["failed"] == 0 and (ttl_stats.get("failed") or 0) == 0 else "warn",
-            f"群 {gid} {'手动' if manual else '定时'}流水线：移动 {stats['moved']} / 失败 {stats['failed']} / "
-            f"超龄 {ttl_stats.get('count', 0)} / 回收 {ttl_stats.get('recycled', 0)} / 删除 {ttl_stats.get('deleted', 0)}",
-        )
-        return result
+        """完整流水线：分类 → 时效 → 容量。manual=True 时容量超限不消耗当日播报额度。
+
+        v2.8.0：同群串行（与手动删除/移动共用一个锁），避免定时与手动互相踩。
+        """
+        lock = self.plugin.group_lock(gid)
+        async with lock:
+            stats = await self.run_cleanup(gid, notify=False)
+            ttl_stats = await self.run_ttl_scan(gid)
+            cap_line = await self.capacity_followup(gid, force=manual)
+            result = {**stats, "ttl": ttl_stats, "capacity": cap_line}
+            if notify:
+                report = self._format_full_report(result)
+                if self._report_worth(result):
+                    await self.plugin.notify_group(gid, report)
+            self.plugin.record_event(
+                "流水线",
+                "info" if stats["failed"] == 0 and (ttl_stats.get("failed") or 0) == 0 else "warn",
+                f"群 {gid} {'手动' if manual else '定时'}流水线：移动 {stats['moved']} / 失败 {stats['failed']} / "
+                f"超龄 {ttl_stats.get('count', 0)} / 回收 {ttl_stats.get('recycled', 0)} / 删除 {ttl_stats.get('deleted', 0)}",
+            )
+            self._audit(
+                "system" if not manual else "manual",
+                gid,
+                "整理流水线",
+                result="ok" if stats["failed"] == 0 else "warn",
+                detail=(
+                    f"移动 {stats['moved']} / 失败 {stats['failed']} / 超龄 {ttl_stats.get('count', 0)}"
+                    f" / 回收 {ttl_stats.get('recycled', 0)} / 删除 {ttl_stats.get('deleted', 0)}"
+                ),
+            )
+            return result
 
     @staticmethod
     def _report_worth(result: dict[str, Any]) -> bool:
@@ -160,6 +216,10 @@ class CleanupScheduler:
             if target not in folders:
                 try:
                     fid = await self.client.create_folder(gid, target)
+                    if not fid:
+                        # 协议端成功不回 id：回查一次
+                        folders = await self._folder_pool(gid)
+                        fid = folders.get(target, "")
                     folders[target] = fid
                     stats["details"].append(f"📁 已自动创建文件夹「{target}」")
                 except QQFileError as e:
@@ -246,6 +306,8 @@ class CleanupScheduler:
             "deleted": 0,
             "failed": 0,
             "unknown_time": 0,
+            "delete_capped": False,
+            "scan_truncated": False,
             "details": [],
         }
         cfg = self.store.get_group(gid)
@@ -254,12 +316,16 @@ class CleanupScheduler:
             return stats
         stats["enabled"] = True
         files = await self._walk_all_files(gid)
+        if getattr(self, "last_scan", {}).get("truncated"):
+            stats["scan_truncated"] = True
+            stats["details"].append("⚠ 文件太多，本次只扫描了一部分（可用面板分页查看）")
         if not files:
             return stats
 
         default_days = int(ttl.get("default_days") or 0)
         default_action = str(ttl.get("action") or "report").strip() or "report"
         recycle_name = str(ttl.get("recycle_folder") or "").strip() or "_回收"
+        max_delete = max(1, int(ttl.get("max_delete_per_run") or 200))
         if default_action not in TTL_ACTIONS:
             default_action = "report"
         overrides = {
@@ -281,7 +347,7 @@ class CleanupScheduler:
             days, action = self._ttl_policy(top, folder_label, default_days, default_action, overrides)
             if days <= 0:
                 continue
-            ts = float(f.get("ts") or 0)
+            ts = int(f.get("ts") or 0)
             if ts <= 0:
                 # v2.7.0：协议端没给上传/修改时间时，无法判断年龄——跳过，绝不误删
                 stats["unknown_time"] += 1
@@ -297,6 +363,10 @@ class CleanupScheduler:
 
             if action == "report":
                 continue
+            if action == "delete" and stats["deleted"] >= max_delete:
+                stats["delete_capped"] = True
+                stats["details"].append(f"⚠ 达到单次删除上限 {max_delete}，后续文件本次不再删除")
+                break
             try:
                 if action == "recycle":
                     if recycle_id is None:
@@ -314,6 +384,8 @@ class CleanupScheduler:
                         current_id=f.get("folder_id") or None,
                     )
                     stats["recycled"] += 1
+                    self._record_recycle(gid, f, folder_label, recycle_name)
+                    self._audit("system", gid, "TTL回收", name, "ok", f"从 {folder_label or '根目录'} 移入 {recycle_name}")
                 elif action == "delete":
                     await self.client.delete_file(
                         gid,
@@ -322,16 +394,28 @@ class CleanupScheduler:
                         busid=f.get("busid") or 0,
                     )
                     stats["deleted"] += 1
+                    self._audit("system", gid, "TTL删除", name, "ok", f"位于 {folder_label or '根目录'}")
             except QQFileError as e:
                 stats["failed"] += 1
                 if stats["count"] <= 8:
                     stats["details"].append(f"✗ {name}: {e}")
+                self._audit("system", gid, f"TTL{'回收' if action == 'recycle' else '删除'}", name, "fail", str(e))
 
-        if stats["count"]:
+        if stats["count"] or stats["unknown_time"]:
             self.plugin.record_event(
                 "时效",
                 "info" if stats["failed"] == 0 else "warn",
                 f"群 {gid} 时效扫描：超龄 {stats['count']} / 回收 {stats['recycled']} / 删除 {stats['deleted']} / 失败 {stats['failed']}",
+            )
+            self._audit(
+                "system",
+                gid,
+                "时效扫描",
+                result="warn" if stats["failed"] else "ok",
+                detail=(
+                    f"超龄 {stats['count']} / 回收 {stats['recycled']} / 删除 {stats['deleted']}"
+                    f" / 失败 {stats['failed']} / 无时间 {stats['unknown_time']}"
+                ),
             )
         return stats
 
@@ -394,6 +478,12 @@ class CleanupScheduler:
         used = int(info.get("used_space") or 0)
         total = int(info.get("total_space") or 0)
         count = int(info.get("file_count") or 0)
+        try:
+            trend = getattr(self.plugin, "trend", None)
+            if trend and total > 0:
+                trend.sample(gid, used, total, count)
+        except Exception:
+            pass
         count_limit = int(limits.get("count_limit") or 0)
         space_limit_gb = float(limits.get("space_limit_gb") or 0)
         warn_pct = int(limits.get("warn_pct") or 100)
@@ -421,6 +511,59 @@ class CleanupScheduler:
             return None
         self.plugin.record_event("容量", "warn", f"群 {gid} {line}")
         return line
+
+    async def preview_ttl(self, gid: str) -> dict[str, Any]:
+        """试运行：只算哪些文件会被回收/删除，不动任何文件。"""
+        cfg = self.store.get_group(gid)
+        ttl = cfg.get("ttl") or {}
+        out: dict[str, Any] = {
+            "enabled": bool(ttl.get("enabled")),
+            "over": 0,
+            "unknown_time": 0,
+            "planned": [],
+            "truncated": False,
+        }
+        if not ttl.get("enabled") or not (self.client and self.client.available):
+            return out
+        files = await self._walk_all_files(gid)
+        if getattr(self, "last_scan", {}).get("truncated"):
+            out["truncated"] = True
+        default_days = int(ttl.get("default_days") or 0)
+        default_action = str(ttl.get("action") or "report")
+        recycle_name = str(ttl.get("recycle_folder") or "").strip() or "_回收"
+        overrides = {
+            str(o.get("folder") or "").strip(): o
+            for o in (ttl.get("folders") or [])
+            if isinstance(o, dict) and str(o.get("folder") or "").strip()
+        }
+        now = time.time()
+        for f in files:
+            folder_label = str(f.get("folder") or "").strip().lstrip("/")
+            top = folder_label.split("/")[0] if folder_label else ""
+            if top == recycle_name:
+                continue
+            days, action = self._ttl_policy(top, folder_label, default_days, default_action, overrides)
+            if days <= 0:
+                continue
+            ts = int(f.get("ts") or 0)
+            if ts <= 0:
+                out["unknown_time"] += 1
+                continue
+            age = (now - ts) / 86400.0
+            if age <= days:
+                continue
+            out["over"] += 1
+            if len(out["planned"]) < 100:
+                out["planned"].append(
+                    {
+                        "name": str(f.get("name") or ""),
+                        "folder": folder_label or "根目录",
+                        "age_days": round(age, 1),
+                        "days": days,
+                        "action": action,
+                    }
+                )
+        return out
 
     # ================= 报告 =================
     @staticmethod
@@ -494,28 +637,15 @@ class CleanupScheduler:
 
     # ================= 工具 =================
     async def _walk_all_files(self, gid: str) -> list[dict[str, Any]]:
-        """递归收集根目录 + 所有层级子文件夹文件，含 folder_id/路径/时间戳。"""
-        out: list[dict[str, Any]] = []
-
-        async def walk(folder_id: str, label: str) -> None:
-            try:
-                raw = (
-                    await self.client.files_by_folder(gid, folder_id)
-                    if folder_id
-                    else await self.client.root_files(gid)
-                )
-                if not isinstance(raw, dict):
-                    return
-                for f in norm_files(raw):
-                    ts = max(int(f.get("upload_time") or 0), int(f.get("modify_time") or 0))
-                    out.append({**f, "folder": label, "folder_id": folder_id or "", "ts": ts})
-                for fd in norm_folders(raw):
-                    await walk(fd["folder_id"], f"{label}/{fd['name']}")
-            except Exception as e:  # 单个子文件夹读失败不拖垮整个扫描
-                logger.warning(f"[扫描] 群 {gid} 读取 {label} 失败，已跳过: {e}")
-
-        await walk("", "")
-        return out
+        """递归收集（v2.8.0 统一到 scanner，带深度/数量/环保护）。"""
+        res = await walk_files(self.client, gid)
+        self.last_scan = {
+            "truncated": res.get("truncated", False),
+            "errors": res.get("errors") or [],
+            "folders_seen": res.get("folders_seen", 0),
+            "files": len(res.get("files") or []),
+        }
+        return res.get("files") or []
 
     async def _folder_pool(self, gid: str) -> dict[str, str]:
         """顶层文件夹名 -> folder_id 映射。"""

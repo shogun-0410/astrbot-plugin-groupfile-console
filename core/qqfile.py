@@ -157,14 +157,18 @@ class QQFileClient:
             params["parent_folder_id"] = str(parent_folder_id)
         resp = await self.call("create_group_file_folder", **params)
         if isinstance(resp, dict):
-            for k in ("folder_id", "id", "folderId", "fid"):
-                if resp.get(k):
-                    return str(resp[k])
-            data = resp.get("data") or {}
-            if isinstance(data, dict):
-                for k in ("folder_id", "id", "folderId", "fid"):
-                    if data.get(k):
-                        return str(data[k])
+            # SnowLuma: {"result":{"retCode":0},"groupItem":{"folderInfo":{"folderId":"/..."}}}
+            for node in (
+                resp,
+                resp.get("groupItem") or {},
+                (resp.get("groupItem") or {}).get("folderInfo") or {},
+                resp.get("data") or {},
+            ):
+                if not isinstance(node, dict):
+                    continue
+                for k in ("folder_id", "folderId", "id", "fid"):
+                    if node.get(k):
+                        return str(node[k])
         return ""
 
 # ---- 数据归一化 ----

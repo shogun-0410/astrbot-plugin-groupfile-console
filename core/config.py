@@ -6,10 +6,15 @@ import json
 import logging
 import os
 import re
+import time
 from pathlib import Path
 from typing import Any
 
+from . import validate as _v
+
 logger = logging.getLogger("gfc_config")
+
+CONFIG_VERSION = 3
 
 try:
     from astrbot.core.utils.astrbot_path import get_astrbot_plugin_data_path
@@ -77,12 +82,11 @@ def normalize_exts(raw: Any) -> list[str]:
 
 
 def normalize_rule(rule: Any) -> Any:
-    """复制规则并清洗 exts（不改调用方原对象）。"""
+    """复制规则并清洗（不改调用方原对象）；非 dict 原样返回（兼容旧测试）。"""
     if not isinstance(rule, dict):
         return rule
-    out = dict(rule)
-    out["exts"] = normalize_exts(out.get("exts"))
-    return out
+    clean = _v.normalize_rule(rule)
+    return clean if clean is not None else dict(rule)
 
 
 def normalize_rules(rules: Any) -> Any:
@@ -96,10 +100,12 @@ def _default_group() -> dict[str, Any]:
         "name": "",
         "enabled": True,  # 分群启用开关：False 时该群不执行任何定时/自动动作（手动命令与 WebUI 仍可用）
         "admins": [],
+        "permissions": {},  # v2.8.0：{QQ: view|move|delete|admin}；admins 里的号等价 admin
         "rules": json.loads(json.dumps(DEFAULT_RULES)),
         "cleanup": {
             "enabled": False,
             "crones": ["0 3 * * *"],
+            "catchup_minutes": 60,
         },
         "limits": {
             "count_limit": 0,
@@ -114,31 +120,69 @@ def _default_group() -> dict[str, Any]:
             "action": "report",      # 超龄动作：report 只报告 / recycle 移入回收文件夹 / delete 删除
             "recycle_folder": "_回收",  # recycle 动作的目标文件夹（不存在时自动创建）
             "folders": [],           # 文件夹级覆盖：[{folder, days, action}]，action 可空=继承群级
+            "max_delete_per_run": 200,  # 单次最多删除数量（防误删失控）
         },
     }
+
+DEFAULT_OPS = {
+    "audit_enabled": True,
+    "audit_keep_days": 30,
+    "recycle_keep_days": 30,
+    "task_keep": 200,
+}
 
 
 class GroupConfigStore:
     def __init__(self) -> None:
         self._path = _data_root() / "groups.json"
+        self.version = CONFIG_VERSION
         self.groups: dict[str, dict[str, Any]] = {}
         self.admin_users: list[str] = []
         self.send_tmp: dict[str, Any] = dict(DEFAULT_SEND_TMP)
+        self.ops: dict[str, Any] = dict(DEFAULT_OPS)
+        self.last_warnings: list[str] = []
         self.load()
 
     def load(self) -> None:
+        self.version = CONFIG_VERSION
         try:
             if self._path.exists():
                 data = json.loads(self._path.read_text(encoding="utf-8"))
+                old_version = int(data.get("version") or 2)
                 raw = data.get("groups", {})
-                self.groups = {str(k): v for k, v in raw.items()}
+                self.groups = {}
+                warns: list[str] = []
+                for gid, cfg in raw.items():
+                    if not isinstance(cfg, dict):
+                        continue
+                    clean, w = _v.normalize_group_patch(cfg)
+                    clean.setdefault("permissions", {})
+                    clean.setdefault("admins", [])
+                    self.groups[str(gid)] = clean
+                    warns.extend(f"{gid}: {x}" for x in w)
                 self.admin_users = [str(a) for a in (data.get("admin_users") or [])]
                 self.send_tmp = self._clean_send_tmp(data.get("send_tmp"))
-                logger.info(f"[群文件控制台] 已加载 {len(self.groups)} 个群配置")
+                ops = data.get("ops")
+                if isinstance(ops, dict):
+                    self.ops = {
+                        **DEFAULT_OPS,
+                        "audit_enabled": _v.norm_bool(ops.get("audit_enabled"), True),
+                        "audit_keep_days": _v.clamp_int(ops.get("audit_keep_days"), 30, 1, 365),
+                        "recycle_keep_days": _v.clamp_int(ops.get("recycle_keep_days"), 30, 1, 365),
+                        "task_keep": _v.clamp_int(ops.get("task_keep"), 200, 20, 1000),
+                    }
+                self.last_warnings = warns[:20]
+                logger.info(
+                    f"[群文件控制台] 已加载 {len(self.groups)} 个群配置（version {old_version}→{CONFIG_VERSION}）"
+                )
+                if old_version < CONFIG_VERSION:
+                    self.version = CONFIG_VERSION
+                    self.save()
         except Exception as e:
             logger.error(f"[群文件控制台] 读取配置失败，使用默认: {e}")
             self.groups = {}
             self.send_tmp = dict(DEFAULT_SEND_TMP)
+            self.ops = dict(DEFAULT_OPS)
 
     def save(self) -> None:
         try:
@@ -147,10 +191,11 @@ class GroupConfigStore:
             tmp.write_text(
                 json.dumps(
                     {
-                        "version": 2,
+                        "version": CONFIG_VERSION,
                         "groups": self.groups,
                         "admin_users": self.admin_users,
                         "send_tmp": getattr(self, "send_tmp", dict(DEFAULT_SEND_TMP)),
+                        "ops": getattr(self, "ops", dict(DEFAULT_OPS)),
                     },
                     ensure_ascii=False,
                     indent=2,
@@ -232,11 +277,68 @@ class GroupConfigStore:
         if cur is None:
             cur = _default_group()
             self.groups[gid] = cur
-        for k in ("name", "enabled", "admins", "rules", "cleanup", "limits", "dupe_rule", "ttl"):
-            if k in patch and patch[k] is not None:
-                cur[k] = normalize_rules(patch[k]) if k == "rules" else patch[k]
+        clean, warns = _v.normalize_group_patch(patch)
+        self.last_warnings = warns
+        for k, val in clean.items():
+            if val is not None:
+                cur[k] = val
         self.save()
         return cur
+
+    # ---- 权限（v2.8.0） ----
+    def role_of(self, group_id: str | int, uid: str) -> str:
+        """返回该用户在本群的角色：view / move / delete / admin；空串=无权限。"""
+        uid = str(uid or "").strip()
+        if not uid:
+            return ""
+        cfg = self.groups.get(str(group_id)) or {}
+        if uid in [str(a) for a in (cfg.get("admins") or [])]:
+            return "admin"
+        return str((cfg.get("permissions") or {}).get(uid) or "")
+
+    def set_role(self, group_id: str | int, uid: str, role: str) -> dict[str, Any]:
+        gid = str(group_id)
+        cur = self.groups.get(gid)
+        if cur is None:
+            cur = _default_group()
+            self.groups[gid] = cur
+        perms = dict(cur.get("permissions") or {})
+        uid = str(uid or "").strip()
+        role = str(role or "").strip().lower()
+        if not uid:
+            return perms
+        if role in ("", "none", "remove", "删"):
+            perms.pop(uid, None)
+        elif role in _v.ROLES:
+            perms[uid] = role
+        cur["permissions"] = perms
+        self.save()
+        return perms
+
+    # ---- 运维设置（v2.8.0） ----
+    def get_ops(self) -> dict[str, Any]:
+        return dict(DEFAULT_OPS, **getattr(self, "ops", {}) or {})
+
+    def set_ops(self, patch: dict[str, Any]) -> dict[str, Any]:
+        cur = self.get_ops()
+        if isinstance(patch, dict):
+            cur.update(patch)
+        self.ops = {
+            "audit_enabled": _v.norm_bool(cur.get("audit_enabled"), True),
+            "audit_keep_days": _v.clamp_int(cur.get("audit_keep_days"), 30, 1, 365),
+            "recycle_keep_days": _v.clamp_int(cur.get("recycle_keep_days"), 30, 1, 365),
+            "task_keep": _v.clamp_int(cur.get("task_keep"), 200, 20, 1000),
+        }
+        self.save()
+        return dict(self.ops)
+
+    def touch_last_run(self, group_id: str | int, ts: float | None = None) -> None:
+        """记录该群最近一次自动流水线时间（供补跑判断）。"""
+        cfg = self.groups.get(str(group_id))
+        if cfg is None:
+            return
+        cfg["last_run"] = int(ts if ts is not None else time.time())
+        self.save()
 
     def remove_group(self, group_id: str | int) -> bool:
         gid = str(group_id)
@@ -273,12 +375,12 @@ class GroupConfigStore:
         规则可带 exclude 排除词列表（如 ["预告","目录"]）：文件名含任一排除词则该规则不参与。
         规则可带 enabled（默认 True）：False = 该条停用，不参与匹配。
 
-        规则之间平级、不看顺序：所有规则都会参与匹配，
-        同一条文件被多条规则命中时，自动选「最具体」的一条
-        （匹配内容越长越优先；空 pattern 的兜底规则只在没有任何规则命中时才采用）。
+        规则之间默认平级：所有规则都会参与匹配，同一条文件被多条规则命中时，
+        选「优先级高 → 匹配内容更长」的一条（v2.8.0 新增 priority，-100~100，默认 0；
+        空 pattern 的兜底规则仍然只在没有更具体规则时采用）。
         """
         best = None
-        best_score = -1
+        best_score = -10**9
         for rule in self.rules(group_id):
             if not isinstance(rule, dict):
                 continue  # 损坏的规则项不参与匹配，避免整页分类崩掉
@@ -301,6 +403,8 @@ class GroupConfigStore:
                     score = len(pattern) + 2
                 else:
                     score = len(pattern)
+            priority = _v.clamp_int(rule.get("priority"), 0, -100, 100)
+            score += priority * 1000
             if score > best_score:
                 best_score = score
                 best = rule
@@ -366,7 +470,15 @@ class GroupConfigStore:
                 })
         return {
             "name": filename,
-            "hit": ({"source": hit.get("source"), "folder": hit.get("folder")} if hit else None),
+            "hit": (
+                {
+                    "source": hit.get("source"),
+                    "folder": hit.get("folder"),
+                    "priority": _v.clamp_int(hit.get("priority"), 0, -100, 100),
+                }
+                if hit
+                else None
+            ),
             "skipped": skipped[:6],
             "disabled": disabled,
         }
