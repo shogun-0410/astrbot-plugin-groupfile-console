@@ -1,4 +1,4 @@
-/* ============================================================
+﻿/* ============================================================
    群文件管理 · v2.2.0 视觉系统（精细版）
    设计语言：深浅双主题（跟随系统）/ 层次卡片 / 线性图标
    圆角规范：卡片 12px · 控件 7px · 小标签 6px（无药丸形）
@@ -21,6 +21,14 @@
   --sh-pop:0 24px 64px rgba(0,0,0,.55);
   --sh-focus:0 0 0 2px rgba(91,140,255,.18);
   --grad:linear-gradient(135deg,#4f7cf7 0%,#6fa0ff 100%);
+  /* v2.9.0 间距体系：全部按 8 的倍数，布局只用这几个变量 */
+  --sp-1:4px; --sp-2:8px; --sp-3:12px; --sp-4:16px; --sp-5:24px; --sp-6:32px;
+  --pad-page:24px;      /* 页面左右留白 */
+  --pad-card:16px;      /* 卡片内边距 */
+  --gap-card:16px;      /* 卡片之间 */
+  --gap-ctl:8px;        /* 控件之间 */
+  --h-ctl:32px;         /* 输入/按钮统一高度 */
+  --h-ctl-sm:26px;
 }
 [data-theme="light"]{
   color-scheme:light;
@@ -61,7 +69,7 @@ input,select,textarea{font-family:inherit;color:var(--text)}
 a{color:var(--accent)}
 
 /* ============ 品牌头 + 胶囊导航 ============ */
-.container{max-width:1160px;margin:0 auto;padding:26px 20px 60px}
+.container{max-width:1160px;margin:0 auto;padding:var(--sp-6) var(--pad-page) 64px}
 .header{padding:6px 4px 14px}
 .brand{display:flex;align-items:center;gap:14px}
 .logo{
@@ -81,8 +89,8 @@ h1{
   padding:2px 9px;border-radius:var(--r-chip);font-variant-numeric:tabular-nums;
 }
 .tabs{
-  display:flex;gap:2px;padding:4px;border-radius:10px;background:var(--surface);
-  border:1px solid var(--border);margin:18px 0 20px;position:sticky;top:10px;z-index:50;
+  display:flex;gap:var(--sp-1);padding:var(--sp-1);border-radius:10px;background:var(--surface);
+  border:1px solid var(--border);margin:var(--sp-4) 0 var(--sp-4);position:sticky;top:var(--sp-2);z-index:50;
   backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
   box-shadow:var(--sh-card);
 }
@@ -109,15 +117,15 @@ h1{
 .section,.card{
   background:linear-gradient(180deg,var(--surface-2),var(--surface));
   border:1px solid var(--border);border-radius:var(--r-card);
-  box-shadow:var(--sh-card);padding:18px 20px;margin-bottom:16px;
+  box-shadow:var(--sh-card);padding:var(--pad-card) 18px;margin-bottom:var(--gap-card);
 }
 [data-theme="light"] .section,[data-theme="light"] .card{
   background:linear-gradient(180deg,#ffffff,#fcfdff);
 }
-.section-header{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+.section-header{display:flex;align-items:center;gap:var(--sp-2);margin-bottom:var(--sp-3)}
 .section-header h2,.card-head h2{
   font-size:15px;font-weight:600;color:var(--text);letter-spacing:.3px;
-  display:flex;align-align:center;gap:8px;
+  display:flex;align-items:center;gap:var(--sp-2);
 }
 .section-header .spacer{flex:1}
 .sec-ico{
@@ -127,9 +135,9 @@ h1{
 .h2-gbadge{margin-left:auto}
 
 /* ============ 统计卡（总览）============ */
-.status-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;margin-bottom:16px}
+.status-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:var(--gap-card);margin-bottom:16px}
 .status-card{
-  position:relative;overflow:hidden;display:flex;align-items:center;gap:12px;
+  position:relative;overflow:hidden;display:flex;align-items:center;gap:var(--sp-3);
   background:linear-gradient(180deg,var(--surface-2),var(--surface));
   border:1px solid var(--border);border-radius:var(--r-card);
   box-shadow:var(--sh-card);padding:16px 18px;transition:all .18s;
@@ -154,7 +162,7 @@ h1{
 
 /* ============ 按钮 ============ */
 .btn{
-  display:inline-flex;align-items:center;gap:7px;padding:7px 14px;border-radius:var(--r-ctl);
+  display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:0 14px;min-height:var(--h-ctl);border-radius:var(--r-ctl);
   border:1px solid var(--border);background:var(--surface-2);color:var(--text);
   font-size:13px;font-weight:500;cursor:pointer;transition:all .15s;
 }
@@ -168,7 +176,7 @@ h1{
 .btn-primary:hover{background:var(--grad);filter:brightness(1.08);border-color:var(--accent-2)}
 .btn-danger{color:var(--danger);border-color:rgba(240,100,77,.35)}
 .btn-danger:hover{background:var(--danger-soft);border-color:rgba(240,100,77,.55)}
-.btn-sm{padding:5px 11px;font-size:12.5px}
+.btn-sm{padding:4px 10px;font-size:12.5px;min-height:var(--h-ctl-sm)}
 .btn svg{width:14px;height:14px}
 .btn-primary svg{width:14px;height:14px}
 
@@ -178,7 +186,8 @@ h1{
 input[type="text"],select,textarea,
 input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="button"]):not([type="submit"]):not([type="reset"]){
   background:var(--solid);border:1px solid var(--border);border-radius:var(--r-ctl);
-  padding:7px 12px;font-size:13px;color:var(--text);outline:none;transition:all .15s;width:100%;
+  padding:6px 10px;font-size:13px;color:var(--text);outline:none;transition:all .15s;width:100%;
+  min-height:var(--h-ctl);
 }
 .toolbar input,.toolbar select,.toolbar textarea{width:auto}
 select option{background:var(--solid);color:var(--text)}
@@ -227,11 +236,11 @@ input[type="number"]::-webkit-outer-spin-button{opacity:.55}
 .enable-check:has(input:checked) .ec-main{color:var(--ok)}
 
 /* ============ 工具栏 ============ */
-.toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:14px}
+.toolbar{display:flex;flex-wrap:wrap;gap:var(--gap-ctl);align-items:center;margin-bottom:var(--sp-3)}
 .toolbar .hint,.toolbar .hint-text{flex:none}
 .toolbar .spacer{flex:1}
 .field{margin-bottom:0}
-.form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px 14px;margin:12px 0}
+.form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:var(--gap-ctl) var(--sp-4);margin:12px 0}
 .form-grid .field{display:flex;flex-direction:column;gap:5px}
 label.field > span,.field-label{font-size:12px;color:var(--text-2);font-weight:500}
 
@@ -647,8 +656,7 @@ select option{color:var(--text);background:var(--solid)}
 
 /* 工具栏与按钮呼吸感（文件页等拥挤） */
 .toolbar{gap:10px}
-.btn{padding:8px 15px}
-.btn-sm{padding:6px 12px}
+.btn{padding:0 14px}
 
 /* ============ v2.2.4 毛玻璃主题层 + 自绘复选框 ============ */
 /* 1) 背景光晕：蓝 / 紫 / 青三色（去掉暖色，浓度收敛） */

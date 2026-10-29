@@ -1,10 +1,10 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>群文件管理</title>
-  <link rel="stylesheet" href="./style.css?v=2.8.0">
+  <link rel="stylesheet" href="./style.css?v=2.9.0">
 </head>
 <body>
   <div class="container">
@@ -15,17 +15,14 @@
           <h1>群文件管理</h1>
           <p class="subtitle">多群配置 · 自动分类 · 定时整理流水线（分类/时效/容量）· 查重维护，修改保存后立即生效</p>
         </div>
-        <div class="brand-meta"><span class="ver-chip">v2.8.0</span></div>
+        <div class="brand-meta"><span class="ver-chip">v2.9.0</span></div>
       </div>
       <nav class="tabs">
         <button class="tab-btn active" data-tab="overview" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg><span>总览</span></button>
         <button class="tab-btn" data-tab="groups" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg><span>群配置</span></button>
         <button class="tab-btn" data-tab="rules" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg><span>分类规则</span></button>
         <button class="tab-btn" data-tab="maint" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg><span>定时与维护</span></button>
-        <button class="tab-btn" data-tab="files" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span>文件管理</span></button>
-        <button class="tab-btn" data-tab="tasks" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg><span>任务</span></button>
-        <button class="tab-btn" data-tab="audit" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v16H4z"/><path d="M8 8h8M8 12h8M8 16h5"/></svg><span>审计</span></button>
-        <button class="tab-btn" data-tab="help" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 2.5-3 4.5"/><line x1="12" y1="17.5" x2="12" y2="17.6"/></svg><span>帮助</span></button>
+        <button class="tab-btn" data-tab="files" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span>文件管理</span></button>        <button class="tab-btn" data-tab="help" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 2.5-3 4.5"/><line x1="12" y1="17.5" x2="12" y2="17.6"/></svg><span>帮助</span></button>
       </nav>
     </header>
 
@@ -36,15 +33,6 @@
         <div class="status-card"><div class="stat-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M6 7V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v2"/><path d="M2 13h20"/></svg></div><div><div class="stat-val" id="val-bound">--</div><div class="stat-label">OneBot 客户端</div></div></div>
         <div class="status-card"><div class="stat-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div><div><div class="stat-val" id="val-groups">--</div><div class="stat-label">已配置群</div></div></div>
         <div class="status-card"><div class="stat-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.4 8.4 0 0 1-8.5 8.4 8.6 8.6 0 0 1-3.9-.9L3 21l1.9-5.4a8.4 8.4 0 1 1 16.1-4.1z"/></svg></div><div><div class="stat-val" id="val-umi">--</div><div class="stat-label">活跃会话群</div></div></div>
-      </div>
-
-      <div class="section">
-        <div class="section-header">
-          <h2>容量趋势</h2>
-          <span class="hint-text">每天记录一次用量，最多 120 天</span>
-          <select id="tr-group" style="margin-left:auto;max-width:240px;"></select>
-        </div>
-        <div id="tr-body"><div class="empty-state">选择群后加载</div></div>
       </div>
 
       <div class="section">
@@ -234,52 +222,6 @@
       </div>
     </section>
 
-    <!-- Tab 7: 任务 -->
-    <section id="tab-tasks" class="tab-content">
-      <div class="section">
-        <div class="section-header">
-          <h2>后台任务</h2>
-          <span class="hint-text">整理 / 查重 / 扫描 / 发文件；可查看进度与取消</span>
-        </div>
-        <div class="toolbar">
-          <button id="t-refresh" class="btn btn-primary" type="button">刷新</button>
-          <span class="hint-text" id="t-stats"></span>
-        </div>
-        <div id="t-list"><div class="empty-state">暂无任务</div></div>
-      </div>
-    </section>
-
-    <!-- Tab 8: 审计 -->
-    <section id="tab-audit" class="tab-content">
-      <div class="section">
-        <div class="section-header">
-          <h2>审计日志</h2>
-          <span class="hint-text">删除 / 移动 / 整理 / 配置变更都会留痕</span>
-        </div>
-        <div class="toolbar">
-          <select id="a-group"><option value="">全部群</option></select>
-          <input id="a-action" type="text" placeholder="动作筛选（如 删除）" />
-          <button id="a-refresh" class="btn btn-primary" type="button">刷新</button>
-          <span class="hint-text" id="a-stats"></span>
-        </div>
-        <div id="a-list"><div class="empty-state">暂无审计记录</div></div>
-      </div>
-      <div class="section">
-        <div class="section-header"><h2>回收站</h2><span class="hint-text">TTL「移入回收」的文件可一键还原</span></div>
-        <div class="toolbar"><button id="r-refresh" class="btn" type="button">刷新回收站</button><button id="r-prune" class="btn" type="button">清理过期索引</button><span class="hint-text" id="r-stats"></span></div>
-        <div id="r-list"><div class="empty-state">回收站为空</div></div>
-      </div>
-      <div class="section">
-        <div class="section-header"><h2>运维设置</h2><span class="hint-text">审计保留 / 回收站索引保留</span></div>
-        <div class="form-grid">
-          <div class="field"><label>审计日志保留（天）</label><input id="o-audit-days" type="number" min="1" max="365" value="30" /></div>
-          <div class="field"><label>回收站索引保留（天）</label><input id="o-recycle-days" type="number" min="1" max="365" value="30" /></div>
-        </div>
-        <label class="inline-check"><input id="o-audit-en" type="checkbox" checked /> 启用审计日志</label>
-        <div class="toolbar"><button id="o-save" class="btn btn-primary" type="button">保存运维设置</button><span class="hint-text" id="o-msg"></span></div>
-      </div>
-    </section>
-
     <!-- Tab 9: 帮助 -->
     <section id="tab-help" class="tab-content">
       <div class="section">
@@ -292,6 +234,6 @@
   </div>
 
   <div id="toast" class="toast hidden"></div>
-  <script type="module" src="./app.js?v=2.8.0"></script>
+  <script type="module" src="./app.js?v=2.9.0"></script>
 </body>
 </html>

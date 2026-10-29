@@ -1,4 +1,4 @@
-"""多群配置存储：数据持久化到 AstrBot 插件数据目录，避免更新插件时丢失。"""
+﻿"""多群配置存储：数据持久化到 AstrBot 插件数据目录，避免更新插件时丢失。"""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from . import validate as _v
 
 logger = logging.getLogger("gfc_config")
 
-CONFIG_VERSION = 3
+CONFIG_VERSION = 4
 
 try:
     from astrbot.core.utils.astrbot_path import get_astrbot_plugin_data_path
@@ -100,7 +100,6 @@ def _default_group() -> dict[str, Any]:
         "name": "",
         "enabled": True,  # 分群启用开关：False 时该群不执行任何定时/自动动作（手动命令与 WebUI 仍可用）
         "admins": [],
-        "permissions": {},  # v2.8.0：{QQ: view|move|delete|admin}；admins 里的号等价 admin
         "rules": json.loads(json.dumps(DEFAULT_RULES)),
         "cleanup": {
             "enabled": False,
@@ -124,13 +123,6 @@ def _default_group() -> dict[str, Any]:
         },
     }
 
-DEFAULT_OPS = {
-    "audit_enabled": True,
-    "audit_keep_days": 30,
-    "recycle_keep_days": 30,
-    "task_keep": 200,
-}
-
 
 class GroupConfigStore:
     def __init__(self) -> None:
@@ -139,7 +131,6 @@ class GroupConfigStore:
         self.groups: dict[str, dict[str, Any]] = {}
         self.admin_users: list[str] = []
         self.send_tmp: dict[str, Any] = dict(DEFAULT_SEND_TMP)
-        self.ops: dict[str, Any] = dict(DEFAULT_OPS)
         self.last_warnings: list[str] = []
         self.load()
 
@@ -156,21 +147,11 @@ class GroupConfigStore:
                     if not isinstance(cfg, dict):
                         continue
                     clean, w = _v.normalize_group_patch(cfg)
-                    clean.setdefault("permissions", {})
                     clean.setdefault("admins", [])
                     self.groups[str(gid)] = clean
                     warns.extend(f"{gid}: {x}" for x in w)
                 self.admin_users = [str(a) for a in (data.get("admin_users") or [])]
                 self.send_tmp = self._clean_send_tmp(data.get("send_tmp"))
-                ops = data.get("ops")
-                if isinstance(ops, dict):
-                    self.ops = {
-                        **DEFAULT_OPS,
-                        "audit_enabled": _v.norm_bool(ops.get("audit_enabled"), True),
-                        "audit_keep_days": _v.clamp_int(ops.get("audit_keep_days"), 30, 1, 365),
-                        "recycle_keep_days": _v.clamp_int(ops.get("recycle_keep_days"), 30, 1, 365),
-                        "task_keep": _v.clamp_int(ops.get("task_keep"), 200, 20, 1000),
-                    }
                 self.last_warnings = warns[:20]
                 logger.info(
                     f"[群文件控制台] 已加载 {len(self.groups)} 个群配置（version {old_version}→{CONFIG_VERSION}）"
@@ -182,7 +163,6 @@ class GroupConfigStore:
             logger.error(f"[群文件控制台] 读取配置失败，使用默认: {e}")
             self.groups = {}
             self.send_tmp = dict(DEFAULT_SEND_TMP)
-            self.ops = dict(DEFAULT_OPS)
 
     def save(self) -> None:
         try:
@@ -195,7 +175,6 @@ class GroupConfigStore:
                         "groups": self.groups,
                         "admin_users": self.admin_users,
                         "send_tmp": getattr(self, "send_tmp", dict(DEFAULT_SEND_TMP)),
-                        "ops": getattr(self, "ops", dict(DEFAULT_OPS)),
                     },
                     ensure_ascii=False,
                     indent=2,
@@ -285,53 +264,6 @@ class GroupConfigStore:
         self.save()
         return cur
 
-    # ---- 权限（v2.8.0） ----
-    def role_of(self, group_id: str | int, uid: str) -> str:
-        """返回该用户在本群的角色：view / move / delete / admin；空串=无权限。"""
-        uid = str(uid or "").strip()
-        if not uid:
-            return ""
-        cfg = self.groups.get(str(group_id)) or {}
-        if uid in [str(a) for a in (cfg.get("admins") or [])]:
-            return "admin"
-        return str((cfg.get("permissions") or {}).get(uid) or "")
-
-    def set_role(self, group_id: str | int, uid: str, role: str) -> dict[str, Any]:
-        gid = str(group_id)
-        cur = self.groups.get(gid)
-        if cur is None:
-            cur = _default_group()
-            self.groups[gid] = cur
-        perms = dict(cur.get("permissions") or {})
-        uid = str(uid or "").strip()
-        role = str(role or "").strip().lower()
-        if not uid:
-            return perms
-        if role in ("", "none", "remove", "删"):
-            perms.pop(uid, None)
-        elif role in _v.ROLES:
-            perms[uid] = role
-        cur["permissions"] = perms
-        self.save()
-        return perms
-
-    # ---- 运维设置（v2.8.0） ----
-    def get_ops(self) -> dict[str, Any]:
-        return dict(DEFAULT_OPS, **getattr(self, "ops", {}) or {})
-
-    def set_ops(self, patch: dict[str, Any]) -> dict[str, Any]:
-        cur = self.get_ops()
-        if isinstance(patch, dict):
-            cur.update(patch)
-        self.ops = {
-            "audit_enabled": _v.norm_bool(cur.get("audit_enabled"), True),
-            "audit_keep_days": _v.clamp_int(cur.get("audit_keep_days"), 30, 1, 365),
-            "recycle_keep_days": _v.clamp_int(cur.get("recycle_keep_days"), 30, 1, 365),
-            "task_keep": _v.clamp_int(cur.get("task_keep"), 200, 20, 1000),
-        }
-        self.save()
-        return dict(self.ops)
-
     def touch_last_run(self, group_id: str | int, ts: float | None = None) -> None:
         """记录该群最近一次自动流水线时间（供补跑判断）。"""
         cfg = self.groups.get(str(group_id))
@@ -376,8 +308,7 @@ class GroupConfigStore:
         规则可带 enabled（默认 True）：False = 该条停用，不参与匹配。
 
         规则之间默认平级：所有规则都会参与匹配，同一条文件被多条规则命中时，
-        选「优先级高 → 匹配内容更长」的一条（v2.8.0 新增 priority，-100~100，默认 0；
-        空 pattern 的兜底规则仍然只在没有更具体规则时采用）。
+        选「匹配内容更长」的一条（空 pattern 的兜底规则只在没有更具体规则时采用）。
         """
         best = None
         best_score = -10**9
@@ -403,8 +334,6 @@ class GroupConfigStore:
                     score = len(pattern) + 2
                 else:
                     score = len(pattern)
-            priority = _v.clamp_int(rule.get("priority"), 0, -100, 100)
-            score += priority * 1000
             if score > best_score:
                 best_score = score
                 best = rule
@@ -471,13 +400,7 @@ class GroupConfigStore:
         return {
             "name": filename,
             "hit": (
-                {
-                    "source": hit.get("source"),
-                    "folder": hit.get("folder"),
-                    "priority": _v.clamp_int(hit.get("priority"), 0, -100, 100),
-                }
-                if hit
-                else None
+                {"source": hit.get("source"), "folder": hit.get("folder")} if hit else None
             ),
             "skipped": skipped[:6],
             "disabled": disabled,

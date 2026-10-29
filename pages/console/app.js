@@ -1,4 +1,4 @@
-// 群文件管理 - Plugin Pages 前端（v2.8.0：发送临时目录/清理策略 · 多群复制 · 未保存提示 · 精细视觉系统）
+﻿// 群文件管理 - Plugin Pages 前端（v2.9.0：发送临时目录/清理策略 · 多群复制 · 未保存提示 · 精细视觉系统）
 const bridge = window.AstrBotPluginPage;
 const $ = (id) => document.getElementById(id);
 
@@ -112,7 +112,7 @@ function pickRules(res) {
   return [];
 }
 
-const HELP_TEXT = `群文件管理 v2.8.0  指令速查（短前缀 /gf 等效 /群文件；设置类全部走本控制台）
+const HELP_TEXT = `群文件管理 v2.9.0  指令速查（短前缀 /gf 等效 /群文件；设置类全部走本控制台）
 
 【查看】
   /gf 状态
@@ -376,8 +376,6 @@ function readRuleFromRow(row) {
   // 因此保存必须从行对象的状态读取，不能只查当前可见的 .r-ext:checked
   const exts = cleanExts(row._getExts ? row._getExts() : [...row.querySelectorAll(".r-ext:checked")].map((c) => c.value));
   const out = { source, folder, kind, exts };
-  const pr = row.querySelector(".r-priority");
-  out.priority = pr ? Number(pr.value || 0) : 0;
   const enBox = row.querySelector(".r-en");
   out.enabled = enBox ? enBox.checked : true;
   out.exclude = String(row.querySelector(".r-exclude") ? row.querySelector(".r-exclude").value : "")
@@ -402,14 +400,11 @@ document.querySelectorAll(".tab-btn").forEach((t) => {
     t.classList.add("active");
     document.querySelectorAll(".tab-content").forEach((p) => p.classList.remove("active"));
     $("tab-" + t.dataset.tab).classList.add("active");
-    if (taskTimer) { clearTimeout(taskTimer); taskTimer = null; }
     if (t.dataset.tab === "overview") loadOverview();
     if (t.dataset.tab === "groups") loadGroups();
     if (t.dataset.tab === "rules") loadRulesTab();
     if (t.dataset.tab === "maint") loadMaintTab();
     if (t.dataset.tab === "files") loadFileTab();
-  if (t.dataset.tab === "tasks") loadTasksTab();
-  if (t.dataset.tab === "audit") loadAuditTab();
   });
 });
 
@@ -424,48 +419,11 @@ async function loadOverview() {
     setCardNum("val-groups", d.groups);
     setCardNum("val-umi", Array.isArray(d.umi) ? d.umi.length : 0);
     $("ov-admins").value = (d.admin_users || []).join(",");
-    loadTrend();
   } catch (e) {
     toast("加载状态失败：" + e.message, "error");
   }
 }
-// ---------- 容量趋势（v2.8.0） ----------
-async function loadTrend() {
-  const sel = document.getElementById("tr-group");
-  const box = document.getElementById("tr-body");
-  if (!sel || !box) return;
-  if (!sel.options.length) {
-    try {
-      const g = await bridge.apiGet("groups");
-      sel.innerHTML = (g.groups || []).map((x) =>
-        '<option value="' + esc(String(x.group_id)) + '">' + esc(x.name || x.group_id) + "</option>"
-      ).join("");
-    } catch (e) {}
-  }
-  const gid = sel.value;
-  if (!gid) { box.innerHTML = '<div class="empty-state">还没有配置群</div>'; return; }
-  try {
-    const d = await bridge.apiGet("trend", { gid, days: 14 });
-    const rows = d.series || [];
-    if (!rows.length) { box.innerHTML = '<div class="empty-state">还没有采样数据（发 /gf 状态 或 /gf 整 后会记录）</div>'; return; }
-    const max = Math.max.apply(null, rows.map((r) => Number(r.u || 0)).concat([1]));
-    box.innerHTML = rows.map((r) => {
-      const pct = Math.round((Number(r.u || 0) / max) * 100);
-      const gb = (Number(r.u || 0) / 1073741824).toFixed(2);
-      return '<div style="display:flex;align-items:center;gap:8px;margin:4px 0;font-size:12px;">'
-        + '<span style="width:86px;" class="hint">' + esc(r.d) + "</span>"
-        + '<div style="flex:1;height:10px;background:var(--border);border-radius:5px;overflow:hidden;">'
-        + '<div style="height:100%;width:' + pct + '%;background:var(--accent);"></div></div>'
-        + '<span style="width:130px;text-align:right;">' + gb + 'GB / ' + esc(String(r.n || 0)) + " 个</span></div>";
-    }).join("");
-  } catch (e) {
-    box.innerHTML = '<div class="muted" style="color:var(--danger);">加载失败：' + esc(e.message) + "</div>";
-  }
-}
-document.addEventListener("change", (ev) => {
-  if (ev.target && ev.target.id === "tr-group") loadTrend();
-});
-
+// ---------- 容量趋势（v2.9.0） ----------
 // ---- v2.2.5：总览页全局配置备份（导出全部群 / 导入全局备份，学维护页交互） ----
 (function () {
   function ovBackupJson() { return $("ov-export-text").value.trim(); }
@@ -818,11 +776,6 @@ function renderGroupCard(g) {
         <div class="hint" style="margin-top:6px;">能使用 /群文件 管理命令的人，逗号分隔；留空 = 仅机器人主人。点「选成员」从群里挑，不用手输。</div>
       </div>
       <div class="g-admin-panel sub-panel" style="display:none;"></div>
-      <div class="field">
-        <label class="muted" style="margin-bottom:5px;">🔐 角色权限（每行：QQ 角色；view / move / delete / admin）</label>
-        <textarea class="g-perms" rows="3" placeholder="123456 move&#10;789012 delete" style="width:100%;font-family:monospace;font-size:12px;">${esc(Object.entries(g.permissions || {}).map(([k, v]) => k + " " + v).join("\n"))}</textarea>
-        <div class="hint" style="margin-top:4px;">view 只看；move 可移动/建文件夹；delete 可删除；admin 全部。上方「管理员 QQ」等价 admin。</div>
-      </div>
       <div class="toolbar g-save-bar">
         <button class="g-save btn btn-primary" type="button">保存群基础信息</button>
         <span class="hint-text">分类规则在「分类规则」页；定时 / 容量 / 查重在「定时与维护」页；导出 / 导入包含该群全部设置</span>
@@ -883,18 +836,11 @@ function renderGroupCard(g) {
 
   // 保存群基础信息：全量接口，需把其他模块的设置原样回传，避免覆盖
   card.querySelector(".g-save").addEventListener("click", async () => {
-    const perms = {};
-    String(card.querySelector(".g-perms") ? card.querySelector(".g-perms").value : "")
-      .split("\n").forEach((line) => {
-        const m = line.trim().match(/^(\d{5,})\s+([a-zA-Z]+|查看|移动|删除|管理员|管)$/);
-        if (m) perms[m[1]] = m[2].toLowerCase();
-      });
     const body = {
       group_id: g.group_id,
       enabled: card.querySelector(".g-enabled").checked,
       name: card.querySelector(".g-name").value.trim(),
       admins: card.querySelector(".g-admins").value.split(/[,，\s]+/).filter(Boolean),
-      permissions: perms,
       rules: Array.isArray(g.rules) ? g.rules : [],
       cleanup: g.cleanup || { enabled: false, crones: ["0 3 * * *"] },
       limits: g.limits || {},
@@ -1348,7 +1294,6 @@ function renderRulesEditor(gid) {
         </label>
         <span class="r-idx hint">${i + 1}.</span>
         <input type="text" class="r-source" value="${esc(r.source || "")}" placeholder="规则备注（可不填）" style="flex:1 1 120px;min-width:90px;" />
-        <input type="number" class="r-priority" value="${r.priority != null ? r.priority : 0}" min="-100" max="100" title="优先级：越高越先命中（-100~100，默认 0）" style="flex:0 0 74px;" />
         <select class="r-kind" style="flex:0 0 100px;">
           <option value="kw">🔑 关键词</option>
           <option value="dsl">🧩 构建器</option>
@@ -1751,7 +1696,6 @@ function renderRulesEditor(gid) {
       exts: cleanExts(r.exts),
       enabled: r.enabled !== false,
       exclude: Array.isArray(r.exclude) ? r.exclude.filter(Boolean) : [],
-      priority: Number(r.priority || 0),
     };
     if (out.kind === "dsl" && Array.isArray(r.dsl) && r.dsl.length) {
       out.dsl = r.dsl.map((s) => {
@@ -2244,8 +2188,8 @@ function renderRulesEditor(gid) {
     const btn = sec2.querySelector(".g-run-cleanup");
     btn.disabled = true;
     try {
-      const r = await bridge.apiPost("task", { kind: "cleanup", group_id: g.group_id, actor: "panel" });
-      toast("已提交整理任务 " + (r.task_id || "") + "，进度见「任务」页");
+      const r = await bridge.apiPost("cleanup", { group_id: g.group_id });
+      toast("整理完成：移动 " + (r.moved || 0) + "，失败 " + (r.failed || 0) + "，跳过 " + (r.skipped || 0));
     } catch (e) {
       toast("整理失败：" + e.message, "error");
     }
@@ -2387,7 +2331,7 @@ $("m-export").addEventListener("click", async () => {
       limits: data.limits || {},
       ttl: data.ttl || {},
       dupe_rule: data.dupe_rule || {},
-      export_version: "2.8.0",
+      export_version: "2.9.0",
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const a = document.createElement("a");
@@ -3361,8 +3305,8 @@ $("f-move").addEventListener("click", async () => {
 $("f-cleanup").addEventListener("click", async () => {
   if (!currentGroupId) return toast("请先选择群");
   try {
-    const r = await bridge.apiPost("task", { kind: "cleanup", group_id: currentGroupId, actor: "panel" });
-    toast("已提交整理任务 " + (r.task_id || "") + "，进度见「任务」页");
+    const r = await bridge.apiPost("cleanup", { group_id: currentGroupId });
+    toast("整理完成：移动 " + (r.moved || 0) + "，失败 " + (r.failed || 0));
   } catch (e) {
     toast("触发失败：" + e.message, "error");
   }
@@ -3431,17 +3375,15 @@ $("f-search-res").addEventListener("click", async (e) => {
   btn.disabled = true;
   btn.textContent = "发送中…";
   try {
-    const r = await bridge.apiPost("task", {
-      kind: "send_file",
+    await bridge.apiPost("send_file", {
       group_id: $("f-group").value,
       file_id: f.file_id,
       folder_id: f.folder_id || "",
       busid: f.busid || 0,
       name: f.name,
-      actor: "panel",
     });
-    btn.textContent = "已提交 ✓";
-    toast("已提交发送任务 " + (r.task_id || "") + "，可在「任务」页看进度");
+    btn.textContent = "已发送 ✓";
+    toast("已发送「" + f.name + "」到群");
   } catch (err) {
     btn.textContent = "发送失败";
     btn.disabled = false;
@@ -3459,136 +3401,7 @@ window.addEventListener("beforeunload", (e) => {
   e.returnValue = "";
 });
 
-// ---------- 任务（v2.8.0） ----------
-let taskTimer = null;
-async function loadTasksTab() {
-  clearTimeout(taskTimer);
-  const box = $("t-list");
-  box.innerHTML = '<div class="muted">加载任务中…</div>';
-  try {
-    const d = await bridge.apiGet("tasks", { limit: 50 });
-    const rows = d.tasks || [];
-    $("t-stats").textContent = "运行中 " + ((d.stats && d.stats.running) || 0) + " / 历史 " + ((d.stats && d.stats.history) || 0);
-    if (!rows.length) { box.innerHTML = '<div class="empty-state">暂无任务。面板「文件管理 → 查重/扫描」或发文件会创建任务。</div>'; return; }
-    box.innerHTML = rows.map((t) => {
-      const p = Number(t.progress || 0);
-      const status = t.status === "running" ? "运行中" : t.status === "done" ? "完成" : t.status === "failed" ? "失败" : t.status === "cancelled" ? "已取消" : t.status;
-      const color = t.status === "failed" ? "var(--danger)" : t.status === "done" ? "var(--success)" : "var(--accent)";
-      return '<div class="section" style="padding:10px 12px;margin-bottom:8px;">'
-        + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">'
-        + '<b>' + esc(t.kind) + '</b><span class="hint">群 ' + esc(t.group) + ' · ' + esc(status) + ' · ' + p + '%</span>'
-        + '<span class="hint" style="margin-left:auto;">' + esc(t.message || "") + '</span>'
-        + (t.status === "running" ? '<button class="btn btn-sm t-cancel" data-id="' + esc(t.id) + '">取消</button>' : '')
-        + '</div>'
-        + '<div style="height:6px;background:var(--border);border-radius:3px;margin-top:8px;overflow:hidden;">'
-        + '<div style="height:100%;width:' + Math.max(0, Math.min(100, p)) + '%;background:' + color + ';"></div></div>'
-        + (t.error ? '<div class="hint" style="color:var(--danger);margin-top:4px;">' + esc(t.error) + '</div>' : '')
-        + '</div>';
-    }).join("");
-    box.querySelectorAll(".t-cancel").forEach((b) => b.addEventListener("click", async () => {
-      b.disabled = true;
-      try { await bridge.apiPost("task_cancel", { id: b.dataset.id }); toast("已请求取消"); loadTasksTab(); }
-      catch (e) { toast("取消失败：" + e.message, "error"); b.disabled = false; }
-    }));
-    if (rows.some((t) => t.status === "running" || t.status === "cancelling")) {
-      taskTimer = setTimeout(() => {
-        const pane = document.getElementById("tab-tasks");
-        if (pane && pane.classList.contains("active")) loadTasksTab();
-      }, 3000);
-    }
-  } catch (e) {
-    box.innerHTML = '<div class="muted" style="color:var(--danger);">加载失败：' + esc(e.message) + "</div>";
-  }
-}
-
-// ---------- 审计 / 回收站（v2.8.0） ----------
-async function loadAuditTab() {
-  try {
-    const g = await bridge.apiGet("groups");
-    const sel = $("a-group");
-    const cur = sel.value;
-    sel.innerHTML = '<option value="">全部群</option>' + (g.groups || []).map((x) =>
-      '<option value="' + esc(String(x.group_id)) + '">' + esc(x.name || x.group_id) + "（" + esc(String(x.group_id)) + "）</option>"
-    ).join("");
-    sel.value = cur;
-  } catch (e) {}
-  loadAuditRows();
-  loadRecycleRows();
-  loadOps();
-}
-
-async function loadAuditRows() {
-  const box = $("a-list");
-  box.innerHTML = '<div class="muted">加载审计中…</div>';
-  try {
-    const d = await bridge.apiGet("audit", { limit: 200, gid: $("a-group").value, action: $("a-action").value.trim() });
-    $("a-stats").textContent = "共 " + ((d.rows || []).length) + " 条 · 文件 " + Math.round(((d.stats && d.stats.size) || 0) / 1024) + "KB";
-    const rows = d.rows || [];
-    if (!rows.length) { box.innerHTML = '<div class="empty-state">暂无审计记录</div>'; return; }
-    box.innerHTML = '<div style="max-height:420px;overflow:auto;font-size:12px;">' + rows.map((r) =>
-      '<div style="padding:5px 4px;border-bottom:1px solid var(--border);">'
-      + '<span class="hint">' + esc(r.t) + '</span> '
-      + '<b>' + esc(r.actor) + '</b> '
-      + '<span style="color:' + (r.result === "ok" ? "var(--success)" : "var(--danger)") + ';">' + esc(r.action) + '</span> '
-      + esc(r.target || "") + ' <span class="hint">' + esc(r.detail || "") + "</span></div>"
-    ).join("") + "</div>";
-  } catch (e) {
-    box.innerHTML = '<div class="muted" style="color:var(--danger);">加载失败：' + esc(e.message) + "</div>";
-  }
-}
-
-async function loadRecycleRows() {
-  const box = $("r-list");
-  box.innerHTML = '<div class="muted">加载回收站中…</div>';
-  try {
-    const d = await bridge.apiGet("recycle", { limit: 200 });
-    const rows = d.items || [];
-    $("r-stats").textContent = "共 " + rows.length + " 条";
-    if (!rows.length) { box.innerHTML = '<div class="empty-state">回收站为空</div>'; return; }
-    box.innerHTML = '<div style="max-height:320px;overflow:auto;">' + rows.map((it) =>
-      '<div style="display:flex;gap:8px;align-items:center;padding:6px 4px;border-bottom:1px solid var(--border);">'
-      + '<span style="flex:1;">' + esc(it.name) + ' <span class="hint">原位置 ' + esc(it.from_label || "根目录") + " · 群 " + esc(it.group) + "</span></span>"
-      + '<button class="btn btn-sm r-restore" data-id="' + esc(it.id) + '">还原</button></div>'
-    ).join("") + "</div>";
-    box.querySelectorAll(".r-restore").forEach((b) => b.addEventListener("click", async () => {
-      b.disabled = true;
-      try { await bridge.apiPost("recycle_restore", { id: b.dataset.id }); toast("已还原"); loadRecycleRows(); }
-      catch (e) { toast("还原失败：" + e.message, "error"); b.disabled = false; }
-    }));
-  } catch (e) {
-    box.innerHTML = '<div class="muted" style="color:var(--danger);">加载失败：' + esc(e.message) + "</div>";
-  }
-}
-
-async function loadOps() {
-  try {
-    const d = await bridge.apiGet("ops");
-    const o = d.ops || {};
-    $("o-audit-days").value = o.audit_keep_days != null ? o.audit_keep_days : 30;
-    $("o-recycle-days").value = o.recycle_keep_days != null ? o.recycle_keep_days : 30;
-    $("o-audit-en").checked = o.audit_enabled !== false;
-  } catch (e) {}
-}
-
-document.addEventListener("click", (ev) => {
-  const t = ev.target;
-  if (t && t.id === "t-refresh") loadTasksTab();
-  if (t && t.id === "a-refresh") loadAuditRows();
-  if (t && t.id === "r-refresh") loadRecycleRows();
-  if (t && t.id === "r-prune") { bridge.apiPost("recycle_delete", {}).then(() => { toast("已清理过期索引"); loadRecycleRows(); }).catch((e) => toast("清理失败：" + e.message, "error")); }
-  if (t && t.id === "o-save") {
-    bridge.apiPost("ops", {
-      audit_enabled: $("o-audit-en").checked,
-      audit_keep_days: Number($("o-audit-days").value || 30),
-      recycle_keep_days: Number($("o-recycle-days").value || 30),
-    }).then(() => { toast("运维设置已保存"); $("o-msg").textContent = "已保存"; }).catch((e) => toast("保存失败：" + e.message, "error"));
-  }
-});
-["a-group", "a-action"].forEach((id) => {
-  const el = document.getElementById(id);
-  if (el) el.addEventListener("change", loadAuditRows);
-});
-
+// ---------- 任务（v2.9.0） ----------
 // ---------- init ----------
 (async function init() {
   try {

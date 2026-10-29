@@ -1,4 +1,4 @@
-"""定时任务流水线：每群按 cron 触发「分类移动 → 时效清理 → 容量播报」，汇总为一条报告。
+﻿"""定时任务流水线：每群按 cron 触发「分类移动 → 时效清理 → 容量播报」，汇总为一条报告。
 
 - 分类移动：按规则表把根目录/子文件夹文件移入目标文件夹（与 v1 相同）。
 - 时效清理：按 upload/modify 时间计算文件年龄，超过策略天数即超龄；
@@ -40,24 +40,6 @@ class CleanupScheduler:
     @property
     def client(self) -> QQFileClient | None:
         return self.plugin.qq
-
-    def _record_recycle(self, gid: str, f: dict[str, Any], label: str, recycle_name: str) -> None:
-        store = getattr(self.plugin, "recycle_store", None)
-        if not store:
-            return
-        try:
-            store.add(
-                group=gid,
-                file_id=str(f.get("file_id") or ""),
-                name=str(f.get("name") or ""),
-                size=int(f.get("size") or 0),
-                from_label=label or "根目录",
-                from_folder_id=str(f.get("folder_id") or ""),
-                recycle_folder=recycle_name,
-                actor="system",
-            )
-        except Exception:
-            pass
 
     def _audit(self, actor: str, gid: str, action: str, target: str = "", result: str = "ok", detail: str = "") -> None:
         fn = getattr(self.plugin, "audit_now", None)
@@ -384,7 +366,6 @@ class CleanupScheduler:
                         current_id=f.get("folder_id") or None,
                     )
                     stats["recycled"] += 1
-                    self._record_recycle(gid, f, folder_label, recycle_name)
                     self._audit("system", gid, "TTL回收", name, "ok", f"从 {folder_label or '根目录'} 移入 {recycle_name}")
                 elif action == "delete":
                     await self.client.delete_file(
@@ -478,12 +459,6 @@ class CleanupScheduler:
         used = int(info.get("used_space") or 0)
         total = int(info.get("total_space") or 0)
         count = int(info.get("file_count") or 0)
-        try:
-            trend = getattr(self.plugin, "trend", None)
-            if trend and total > 0:
-                trend.sample(gid, used, total, count)
-        except Exception:
-            pass
         count_limit = int(limits.get("count_limit") or 0)
         space_limit_gb = float(limits.get("space_limit_gb") or 0)
         warn_pct = int(limits.get("warn_pct") or 100)

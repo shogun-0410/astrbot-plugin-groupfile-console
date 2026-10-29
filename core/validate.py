@@ -1,4 +1,4 @@
-"""配置校验与归一化（v2.8.0）。
+﻿"""配置校验与归一化（v2.8.0）。
 
 目标：任何来源（面板、导入、旧配置）的脏值都不能让定时流水线崩溃或误删：
 - 数值统一 clamp；
@@ -16,13 +16,6 @@ from .cron import is_valid_cron
 
 TTL_ACTIONS = ("report", "recycle", "delete")
 RULE_KINDS = ("", "kw", "regex", "dsl")
-ROLES = ("view", "move", "delete", "admin")
-ROLE_ALIASES = {
-    "看": "view", "查看": "view", "read": "view",
-    "移": "move", "移动": "move",
-    "删": "delete", "删除": "delete",
-    "管": "admin", "管理": "admin", "管理员": "admin", "owner": "admin",
-}
 
 
 def clamp_int(value, default: int, lo: int, hi: int) -> int:
@@ -80,7 +73,6 @@ def normalize_rule(rule: Any, idx: int = 0) -> dict[str, Any] | None:
         [str(x).strip() for x in excl if str(x).strip()][:20] if isinstance(excl, list) else []
     )
     out["enabled"] = rule.get("enabled") is not False
-    out["priority"] = clamp_int(rule.get("priority"), 0, -100, 100)
     return out
 
 
@@ -190,23 +182,6 @@ def normalize_dupe(raw: Any) -> tuple[dict[str, Any], list[str]]:
     return out, warns
 
 
-def normalize_permissions(raw: Any) -> tuple[dict[str, str], list[str]]:
-    warns: list[str] = []
-    src = raw if isinstance(raw, dict) else {}
-    out: dict[str, str] = {}
-    for i, (uid, role) in enumerate(list(src.items())[:200]):
-        uid = str(uid or "").strip()
-        if not uid.isdigit():
-            warns.append(f"权限项「{uid}」不是 QQ 号，已忽略")
-            continue
-        r = ROLE_ALIASES.get(str(role or "").strip().lower(), str(role or "").strip().lower())
-        if r not in ROLES:
-            warns.append(f"{uid} 的角色「{role}」无效，已按 view 处理")
-            r = "view"
-        out[uid] = r
-    return out, warns
-
-
 def normalize_admins(raw: Any) -> list[str]:
     if isinstance(raw, str):
         raw = re.split(r"[,，、;\s]+", raw)
@@ -232,10 +207,6 @@ def normalize_group_patch(patch: Any) -> tuple[dict[str, Any], list[str]]:
         out["enabled"] = norm_bool(patch.get("enabled"), True)
     if "admins" in patch:
         out["admins"] = normalize_admins(patch.get("admins"))
-    if "permissions" in patch:
-        perms, w = normalize_permissions(patch.get("permissions"))
-        out["permissions"] = perms
-        warns.extend(w)
     if "rules" in patch:
         rules, w = normalize_rules(patch.get("rules"))
         out["rules"] = rules
