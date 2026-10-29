@@ -423,7 +423,6 @@ async function loadOverview() {
     toast("加载状态失败：" + e.message, "error");
   }
 }
-// ---------- 容量趋势（v2.9.0） ----------
 // ---- v2.2.5：总览页全局配置备份（导出全部群 / 导入全局备份，学维护页交互） ----
 (function () {
   function ovBackupJson() { return $("ov-export-text").value.trim(); }
