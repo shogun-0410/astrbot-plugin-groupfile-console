@@ -1,0 +1,23 @@
+{
+  "plugin_enabled": {
+    "description": "总开关：关闭后定时整理/时效清理/容量播报暂停；命令仍可用（面板 WebUI 也可切换）",
+    "type": "bool",
+    "default": true
+  },
+  "direct_reply": {
+    "description": "命令回复直发模式：开启后命令结果绕过事件链直接发群消息（回复快几毫秒，但消息打包类插件无法收集进合并转发卡片）。默认关闭——走事件链，命令输出（含 /gf 列 的长文件列表）可被打包插件聚合",
+    "type": "bool",
+    "default": false
+  },
+  "admin_users": {
+    "description": "全局管理员 QQ（逗号分隔）。留空则仅面板管理员与各群管理员可执行管理命令；在 WebUI 总览页设置的名单优先于此处",
+    "type": "list",
+    "default": [],
+    "hint": "例如：10001,10086"
+  },
+  "deliver_dir": {
+    "description": "自定义发送目录（绝对路径，一般留空）。留空 = 共享目录 temp/astrbot_plugin_groupfile_console/send_tmp（协议端可读，推荐）；清理延迟/残留阈值在「插件 → 群文件管理 → 定时与维护 → 发送临时文件」里调",
+    "type": "string",
+    "default": ""
+  }
+}
