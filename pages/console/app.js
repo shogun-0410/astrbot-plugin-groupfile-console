@@ -1,4 +1,4 @@
-﻿// 群文件管理 - Plugin Pages 前端（v2.9.1：发送临时目录/清理策略 · 多群复制 · 未保存提示 · 精细视觉系统）
+﻿// 群文件管理 - Plugin Pages 前端（v2.9.2：发送临时目录/清理策略 · 多群复制 · 未保存提示 · 精细视觉系统）
 const bridge = window.AstrBotPluginPage;
 const $ = (id) => document.getElementById(id);
 
@@ -112,7 +112,7 @@ function pickRules(res) {
   return [];
 }
 
-const HELP_TEXT = `群文件管理 v2.9.1  指令速查（短前缀 /gf 等效 /群文件；设置类全部走本控制台）
+const HELP_TEXT = `群文件管理 v2.9.2  指令速查（短前缀 /gf 等效 /群文件；设置类全部走本控制台）
 
 【查看】
   /gf 状态
@@ -682,12 +682,97 @@ function renderGroupsViews() {
   ).join("");
   if (prevSel && groupsData.some((g) => String(g.group_id) === prevSel)) editSel.value = prevSel;
   if (!groupsData.length) {
-    host.innerHTML = '<div class="section muted">还没有配置任何群：先切到「管理范围」勾选启用；也可用「高级编辑 / 手动添加」表单。</div>';
+    host.innerHTML = '<div class="section muted">还没有配置任何群：先切到「管理范围」勾选启用，或用「＋ 手动添加」。</div>';
     editSel.innerHTML = '<option value="">暂无已配置的群</option>';
+    renderBatchList();
     return;
   }
   renderEditCard();
+  renderBatchList();
 }
+// v2.9.2：单个群 / 批量编辑（批量只在主列表上勾选，不牺牲单群折叠卡）
+function switchEditMode(mode) {
+  document.querySelectorAll("#g-edit-modes .subchip").forEach((b) =>
+    b.classList.toggle("active", b.dataset.mode === mode));
+  $("g-edit-single").style.display = mode === "single" ? "" : "none";
+  $("g-edit-batch").style.display = mode === "batch" ? "" : "none";
+}
+function renderBatchList() {
+  const box = $("g-batch-list");
+  if (!box) return;
+  if (!groupsData.length) {
+    box.innerHTML = '<div class="empty-state">还没有配置群</div>';
+    $("g-batch-count").textContent = "";
+    return;
+  }
+  box.innerHTML = "";
+  groupsData.slice().sort((a, b) => String(a.group_id).localeCompare(String(b.group_id))).forEach((g) => {
+    const row = document.createElement("label");
+    row.className = "g-batch-row" + (g.enabled === false ? " off" : "");
+    row.dataset.gid = String(g.group_id);
+    row.innerHTML = `
+      <input type="checkbox" class="g-batch-cb" />
+      <span class="g-batch-name">${esc(g.name || g.group_id)}</span>
+      <span class="hint">（${esc(String(g.group_id))}）</span>
+      <span class="g-batch-flags">${g.enabled === false ? "已停用" : "启用中"} · 管理员 ${(g.admins || []).length} 人 · 规则 ${(g.rules || []).length} 条</span>`;
+    box.appendChild(row);
+  });
+  updateBatchCount();
+}
+function batchSelected() {
+  return [...document.querySelectorAll("#g-batch-list .g-batch-row")]
+    .filter((r) => r.querySelector(".g-batch-cb") && r.querySelector(".g-batch-cb").checked)
+    .map((r) => r.dataset.gid);
+}
+function updateBatchCount() {
+  const el = $("g-batch-count");
+  if (!el) return;
+  const n = batchSelected().length;
+  el.textContent = n ? ("已选 " + n + " 个群") : "未选群";
+}
+async function batchApply(kind) {
+  const gids = batchSelected();
+  const msg = $("g-batch-msg");
+  if (!gids.length) { msg.textContent = "请先勾选群"; return; }
+  const uidList = String($("g-batch-admins").value || "").split(/[,，\s]+/).map((s) => s.trim()).filter(Boolean);
+  if ((kind === "add" || kind === "remove") && !uidList.length) { msg.textContent = "请填写管理员 QQ"; return; }
+  msg.textContent = "处理中…";
+  let ok = 0, fail = 0;
+  for (const gid of gids) {
+    const g = groupsData.find((x) => String(x.group_id) === gid);
+    if (!g) continue;
+    const body = { group_id: gid };
+    if (kind === "enable" || kind === "disable") body.enabled = kind === "enable";
+    if (kind === "add" || kind === "remove") {
+      const cur = (g.admins || []).map(String);
+      body.admins = kind === "add"
+        ? [...new Set([...cur, ...uidList])]
+        : cur.filter((a) => !uidList.includes(a));
+    }
+    try {
+      await bridge.apiPost("groups", body);
+      Object.assign(g, body);
+      ok += 1;
+    } catch (e) {
+      fail += 1;
+    }
+  }
+  msg.textContent = "完成：成功 " + ok + " / 失败 " + fail;
+  renderBatchList();
+  renderScopeList(window.__gfcAvailable || []);
+  toast("批量操作完成（成功 " + ok + "）");
+}
+document.querySelectorAll("#g-edit-modes .subchip").forEach((b) =>
+  b.addEventListener("click", () => switchEditMode(b.dataset.mode)));
+$("g-batch-list") && $("g-batch-list").addEventListener("change", updateBatchCount);
+$("g-batch-all") && $("g-batch-all").addEventListener("change", (ev) => {
+  document.querySelectorAll("#g-batch-list .g-batch-cb").forEach((cb) => { cb.checked = ev.target.checked; });
+  updateBatchCount();
+});
+$("g-batch-enable") && $("g-batch-enable").addEventListener("click", () => batchApply("enable"));
+$("g-batch-disable") && $("g-batch-disable").addEventListener("click", () => batchApply("disable"));
+$("g-batch-add") && $("g-batch-add").addEventListener("click", () => batchApply("add"));
+$("g-batch-remove") && $("g-batch-remove").addEventListener("click", () => batchApply("remove"));
 function switchGroupPane(pane) {
   document.querySelectorAll("#g-subnav .subchip").forEach((b) =>
     b.classList.toggle("active", b.dataset.pane === pane));
@@ -985,6 +1070,7 @@ async function loadGroups() {
     const data = await bridge.apiGet("groups");
     groupsData = data.groups || [];
     const available = data.available || [];
+    window.__gfcAvailable = available;
     const pick = $("g-pick");
     const prev = pick.value;
     pick.innerHTML = '<option value="">— 从 bot 所在群选择 —</option>';
@@ -1032,7 +1118,7 @@ function renderScopeList(available) {
     try {
       await bridge.apiPost("groups", { group_id: gid, enabled: checked });
       toast(checked ? `✅ 群 ${gid} 已启用本插件` : `⛔ 群 ${gid} 已停用（配置保留，勾回来即恢复）`);
-      // v2.9.1：只更新本地状态与行样式，不再整页重载（搜索框焦点与滚动位置保持）
+      // v2.9.2：只更新本地状态与行样式，不再整页重载（搜索框焦点与滚动位置保持）
       const cfg = groupsData.find((g) => String(g.group_id) === String(gid));
       if (cfg) cfg.enabled = checked;
       else groupsData.push({ group_id: String(gid), name: "", enabled: checked, rules: [] });
@@ -2357,7 +2443,7 @@ $("m-export").addEventListener("click", async () => {
       limits: data.limits || {},
       ttl: data.ttl || {},
       dupe_rule: data.dupe_rule || {},
-      export_version: "2.9.1",
+      export_version: "2.9.2",
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const a = document.createElement("a");
@@ -3427,7 +3513,7 @@ window.addEventListener("beforeunload", (e) => {
   e.returnValue = "";
 });
 
-// ---------- 任务（v2.9.1） ----------
+// ---------- 任务（v2.9.2） ----------
 // ---------- init ----------
 (async function init() {
   try {

@@ -224,7 +224,7 @@ input[type="number"]::-webkit-outer-spin-button{opacity:.55}
 
 /* 启用开关行：次级轻量（默认素净，勾选后淡绿提示状态） */
 .enable-check{
-  display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:6px 10px;margin:10px 0 14px;
+  display:flex;align-items:center;gap:var(--sp-2);flex-wrap:wrap;padding:6px 10px;margin:var(--sp-3) 0;
   border:1px solid transparent;border-radius:var(--r-ctl);
   background:transparent;font-size:12px;color:var(--text-2);cursor:pointer;
   transition:all .15s;
@@ -276,9 +276,9 @@ label.field > span,.field-label{font-size:12px;color:var(--text-2);font-weight:5
 .g-scope-count{margin-left:auto}
 
 /* ============ 管理员 chips ============ */
-.admin-chips{display:flex;flex-wrap:wrap;gap:7px;margin:10px 0}
+.admin-chips{display:flex;flex-wrap:wrap;gap:var(--sp-2);margin:var(--sp-2) 0}
 .a-chip{
-  display:inline-flex;align-items:center;gap:7px;padding:4px 10px 4px 5px;
+  display:inline-flex;align-items:center;gap:var(--sp-1);padding:4px 10px 4px 5px;
   border-radius:var(--r-chip);background:var(--surface-2);border:1px solid var(--border);
   font-size:12.5px;
 }
@@ -290,7 +290,7 @@ label.field > span,.field-label{font-size:12px;color:var(--text-2);font-weight:5
 .scope-search{display:flex;gap:8px;margin-bottom:12px}
 .scope-search input{flex:1}
 .g-scope-row{
-  display:flex;align-items:center;gap:10px;padding:10px 12px;margin-bottom:7px;
+  display:flex;align-items:center;gap:var(--sp-2);padding:8px 12px;margin-bottom:var(--sp-2);
   border:1px solid var(--border);border-radius:var(--r-ctl);background:var(--surface);
   cursor:pointer;transition:all .15s;
 }
@@ -327,7 +327,7 @@ label.field > span,.field-label{font-size:12px;color:var(--text-2);font-weight:5
 .group-body{padding:18px 20px 20px}
 
 /* ============ 成员选择器 ============ */
-.picker-toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
+.picker-toolbar{display:flex;gap:var(--sp-2);flex-wrap:wrap;align-items:center;margin-bottom:var(--sp-2)}
 .picker-toolbar select,.picker-toolbar input{width:auto;flex:1 1 200px}
 .picker-toolbar select{flex:0 1 240px}
 .member-grid{
@@ -378,7 +378,7 @@ label.field > span,.field-label{font-size:12px;color:var(--text-2);font-weight:5
 .m-chip span:last-child{opacity:.75;font-size:11px;font-variant-numeric:tabular-nums}
 
 /* ============ cron 时间胶囊 ============ */
-.cron-wrap,.cron-list{display:flex;flex-wrap:wrap;gap:7px}
+.cron-wrap,.cron-list{display:flex;flex-wrap:wrap;gap:var(--sp-2)}
 .cron-row{
   display:inline-flex;align-items:center;gap:8px;padding:4px 6px 4px 11px;
   border:1px solid var(--border);border-radius:var(--r-chip);
@@ -394,7 +394,7 @@ label.field > span,.field-label{font-size:12px;color:var(--text-2);font-weight:5
 #tab-files .toolbar .btn{flex:none}
 .f-type-btn{flex:none}
 .f-type-btn.has-filter{border-color:var(--accent);color:var(--accent);background:var(--accent-soft)}
-.type-bar{gap:6px !important;margin-top:-4px;margin-bottom:12px}
+.type-bar{gap:var(--sp-1) !important;margin:var(--sp-2) 0 0}
 .type-chip{
   appearance:none;-webkit-appearance:none;
   padding:3px 10px;border:1px solid var(--border);border-radius:6px;
@@ -404,9 +404,9 @@ label.field > span,.field-label{font-size:12px;color:var(--text-2);font-weight:5
 .type-chip:hover{border-color:var(--accent);color:var(--accent)}
 .type-chip.active{background:var(--accent-soft);border-color:var(--accent);color:var(--accent);font-weight:600}
 .type-chip:focus-visible{outline:none;box-shadow:var(--sh-focus)}
-#f-files{display:flex;flex-direction:column;gap:7px}
+#f-files{display:flex;flex-direction:column;gap:var(--sp-2)}
 .file-item{
-  display:flex;align-items:center;gap:12px;padding:10px 14px;
+  display:flex;align-items:center;gap:var(--sp-2);padding:8px 12px;margin-bottom:var(--sp-2);
   border:1px solid var(--border);border-radius:var(--r-ctl);background:var(--surface);
   transition:all .13s;
 }
@@ -443,7 +443,7 @@ label.field > span,.field-label{font-size:12px;color:var(--text-2);font-weight:5
   background:var(--bg2);padding:12px;font-family:ui-monospace,"SF Mono",Consolas,monospace;
   font-size:12.5px;line-height:1.7;
 }
-.dsl-row{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:10px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--r-ctl);background:var(--surface)}
+.dsl-row{display:flex;flex-wrap:wrap;gap:var(--sp-2);align-items:center;margin-bottom:var(--sp-2);padding:8px 12px;border:1px solid var(--border);border-radius:var(--r-ctl);background:var(--surface)}
 .dsl-row .dsl-idx{font-size:11.5px;color:var(--muted);font-variant-numeric:tabular-nums;min-width:14px}
 .dsl-row .btn-sm{flex:none}
 .dsl-seg{
@@ -565,20 +565,20 @@ select option{color:var(--text);background:var(--solid)}
   background:linear-gradient(180deg,var(--surface-2),var(--surface));
   padding:14px 16px;margin-bottom:10px;
 }
-.scan-file-card .sf-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+.scan-file-card .sf-head{display:flex;align-items:center;gap:var(--sp-2);flex-wrap:wrap;margin-bottom:var(--sp-2)}
 .scan-file-card .sf-body{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 
 /* 规则行卡片化：块间呼吸感（修复拥挤） */
 .rules-row{
   border:1px solid var(--border);border-radius:var(--r-card);
   background:linear-gradient(180deg,var(--surface-2),var(--surface));
-  padding:14px 16px;margin-bottom:10px;
+  padding:var(--sp-3) var(--pad-card);margin-bottom:var(--sp-2);
 }
-.rules-row .row{display:flex;align-items:center;flex-wrap:wrap}
+.rules-row .row{display:flex;align-items:center;flex-wrap:wrap;gap:var(--sp-2)}
 
 /* 复制规则到其他群面板 */
 .g-copy-panel{padding:12px 14px}
-.copy-groups{display:flex;flex-wrap:wrap;gap:7px 16px;max-height:170px;overflow:auto;padding:6px 0}
+.copy-groups{display:flex;flex-wrap:wrap;gap:var(--sp-2) var(--sp-4);max-height:170px;overflow:auto;padding:var(--sp-1) 0}
 .copy-group{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:var(--text-2);cursor:pointer}
 .copy-mode{display:flex;gap:16px;flex-wrap:wrap;margin:8px 0}
 .copy-result{color:var(--accent);font-size:12px;flex:1 1 240px;white-space:normal}
@@ -631,7 +631,7 @@ select option{color:var(--text);background:var(--solid)}
   border:1px solid var(--border);border-radius:8px;background:var(--surface);
   padding:9px 11px;
 }
-.r-ext-panel-head{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-bottom:8px}
+.r-ext-panel-head{display:flex;align-items:center;gap:var(--sp-2);flex-wrap:wrap;margin-bottom:var(--sp-2)}
 .r-ext-panel-title{font-size:12.5px;font-weight:600}
 .r-ext-panel-count{font-size:11.5px}
 .r-ext-panel-spacer{flex:1 1 10px}
@@ -786,3 +786,15 @@ input[type="checkbox"]:disabled{opacity:.45;cursor:not-allowed}
 .g-backup .sub-panel{margin:var(--sp-2) 0 0}
 .g-danger-zone{display:flex;align-items:center;gap:var(--sp-2);flex-wrap:wrap;justify-content:space-between;
   border-top:1px solid var(--border);padding:var(--sp-3) var(--pad-card)}
+
+/* v2.9.2 群配置：单个/批量编辑 + 批量列表 */
+.g-edit-modes{margin-bottom:var(--sp-2)}
+.g-batch-list{display:flex;flex-direction:column;gap:var(--sp-2);max-height:340px;overflow:auto;padding:var(--sp-1) 0}
+.g-batch-row{display:flex;align-items:center;gap:var(--sp-2);padding:8px 12px;
+  border:1px solid var(--border);border-radius:var(--r-ctl);background:var(--surface);cursor:pointer}
+.g-batch-row.off{opacity:.6}
+.g-batch-row:hover{border-color:var(--border-2);background:var(--surface-2)}
+.g-batch-name{font-size:13px;color:var(--text);min-width:90px}
+.g-batch-flags{margin-left:auto;font-size:11.5px;color:var(--muted);font-variant-numeric:tabular-nums}
+.g-batch-bar{flex-wrap:wrap;gap:var(--sp-2);margin-top:var(--sp-3)}
+.g-batch-bar .g-batch-admins{flex:1 1 200px}

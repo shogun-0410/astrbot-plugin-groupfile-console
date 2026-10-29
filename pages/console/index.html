@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>群文件管理</title>
-  <link rel="stylesheet" href="./style.css?v=2.9.1">
+  <link rel="stylesheet" href="./style.css?v=2.9.2">
 </head>
 <body>
   <div class="container">
@@ -15,7 +15,7 @@
           <h1>群文件管理</h1>
           <p class="subtitle">多群配置 · 自动分类 · 定时整理流水线（分类/时效/容量）· 查重维护，修改保存后立即生效</p>
         </div>
-        <div class="brand-meta"><span class="ver-chip">v2.9.1</span></div>
+        <div class="brand-meta"><span class="ver-chip">v2.9.2</span></div>
       </div>
       <nav class="tabs">
         <button class="tab-btn active" data-tab="overview" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg><span>总览</span></button>
@@ -141,11 +141,33 @@
         </div>
 
         <div id="g-pane-edit" class="g-pane" style="display:none;">
-          <div class="toolbar g-edit-bar">
-            <select id="g-edit-sel"></select>
-            <span class="hint-text" id="g-edit-hint">编辑该群基础信息与管理命令权限</span>
+          <div class="subnav g-edit-modes" id="g-edit-modes">
+            <button class="subchip active" data-mode="single" type="button">单个群</button>
+            <button class="subchip" data-mode="batch" type="button">批量编辑</button>
           </div>
-          <div id="g-edit-host"></div>
+          <div id="g-edit-single">
+            <div class="toolbar g-edit-bar">
+              <select id="g-edit-sel"></select>
+              <span class="hint-text" id="g-edit-hint">编辑该群基础信息与管理命令权限</span>
+            </div>
+            <div id="g-edit-host"></div>
+          </div>
+          <div id="g-edit-batch" style="display:none;">
+            <div class="toolbar g-edit-bar">
+              <span class="hint-text">勾选多个群后，用下方「批量操作」一次应用（只改勾选的群）</span>
+              <span class="hint-text g-batch-count" id="g-batch-count"></span>
+            </div>
+            <div id="g-batch-list" class="g-batch-list"></div>
+            <div class="toolbar g-batch-bar">
+              <label class="inline-check"><input type="checkbox" id="g-batch-all" /> 全选</label>
+              <button class="btn btn-primary" id="g-batch-enable" type="button">启用选中</button>
+              <button class="btn" id="g-batch-disable" type="button">停用选中</button>
+              <input type="text" id="g-batch-admins" placeholder="管理员 QQ（逗号分隔）" />
+              <button class="btn" id="g-batch-add" type="button">追加管理员</button>
+              <button class="btn" id="g-batch-remove" type="button">移除管理员</button>
+              <span class="hint-text" id="g-batch-msg"></span>
+            </div>
+          </div>
         </div>
       </div>
     </section>
@@ -247,6 +269,6 @@
   </div>
 
   <div id="toast" class="toast hidden"></div>
-  <script type="module" src="./app.js?v=2.9.1"></script>
+  <script type="module" src="./app.js?v=2.9.2"></script>
 </body>
 </html>
