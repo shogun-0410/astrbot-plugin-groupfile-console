@@ -1,7 +1,7 @@
 ﻿name: astrbot_plugin_groupfile_console
 desc: 群文件管理：规则自动分类（130+ 类型/自定义扩展名/排除词）+ 定时整理流水线（分类→时效→容量）+ 老文件处理（回收文件夹/删除上限）+ 发送临时文件清理可配 + 审计日志 + 分页预览/试运行/定时补跑 + 查重/导入导出/WebUI 控制台
 author: hero
-version: 2.9.2
+version: 2.9.3
 repo: https://github.com/shogun-0410/astrbot-plugin-groupfile-console
 display_name: 群文件管理
 short_desc: 群文件管理：多群文件控制台（自动分类/时效清理/定时流水线/查重/导入导出/发送清理可配）

@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>群文件管理</title>
-  <link rel="stylesheet" href="./style.css?v=2.9.2">
+  <link rel="stylesheet" href="./style.css?v=2.9.3">
 </head>
 <body>
   <div class="container">
@@ -15,7 +15,7 @@
           <h1>群文件管理</h1>
           <p class="subtitle">多群配置 · 自动分类 · 定时整理流水线（分类/时效/容量）· 查重维护，修改保存后立即生效</p>
         </div>
-        <div class="brand-meta"><span class="ver-chip">v2.9.2</span></div>
+        <div class="brand-meta"><span class="ver-chip">v2.9.3</span></div>
       </div>
       <nav class="tabs">
         <button class="tab-btn active" data-tab="overview" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg><span>总览</span></button>
@@ -51,32 +51,34 @@
 
       <div class="section">
         <div class="section-header">
-          <h2>全局配置备份</h2>
-          <span class="hint-text">导出 / 导入全部群的完整配置（规则、定时、容量、查重、管理员）</span>
-          <button id="ov-backup-toggle" class="btn btn-sm" type="button" style="flex:none;margin-left:8px;">▸ 展开</button>
+          <h2>备份 <b>所有群</b> 的配置</h2>
+          <span class="hint-text">范围：本插件全部群。导入按群号覆盖合并，不影响备份以外的群</span>
+          <button id="ov-backup-toggle" class="btn btn-sm" type="button" style="flex:none;margin-left:auto;">▸ 展开</button>
         </div>
         <div id="ov-backup-body" style="display:none;">
-        <div class="toolbar">
-          <button id="ov-export-gen" class="btn" type="button">生成并显示</button>
-          <button id="ov-export-copy" class="btn" type="button">复制 JSON</button>
-          <button id="ov-export-dl" class="btn btn-primary" type="button">⬇ 下载备份文件</button>
-          <button id="ov-import-toggle" class="btn" type="button">📥 导入（覆盖全部）</button>
-        </div>
-        <textarea id="ov-export-text" rows="6" readonly placeholder="点「生成并显示」导出全部群配置，可用于整机迁移 / 备份" style="width:100%;font-family:monospace;font-size:12px;margin-top:8px;"></textarea>
-          <div class="hint-text" id="ov-export-msg" style="margin-top:4px;color:var(--accent)"></div>
-        <div id="ov-import-panel" class="sub-panel" style="display:none;margin-top:10px;">
-          <div class="muted" style="margin-bottom:6px;">导入全局备份（按群号覆盖合并：已有群覆盖同名配置、备份里的新群自动创建、当前多余群不受影响）：粘贴备份 JSON，或点「选择文件」：</div>
-          <textarea id="ov-import-text" rows="6" placeholder="把全局备份 JSON 完整粘贴到这里" style="width:100%;font-family:monospace;font-size:12px;"></textarea>
-          <div class="toolbar" style="margin-top:6px;">
-            <button id="ov-import-file-btn" class="btn" type="button">选择文件…</button>
-            <button id="ov-import-go" class="btn btn-danger" type="button">确认覆盖导入</button>
-            <button id="ov-import-cancel" class="btn" type="button">收起</button>
-            <span class="hint-text" id="ov-import-name"></span>
-            <span class="hint-text" id="ov-import-msg" style="color:var(--accent)"></span>
-          </div>
-          <input type="file" id="ov-import-file" accept=".json,application/json" style="display:none;" />
-        </div>
-          <p class="form-hint">单群的导出 / 导入在「群配置」页每个群卡片上；只导维护四块在「定时与维护」页。</p>
+          <details class="g-backup-sec" id="ov-export-sec">
+            <summary>导出所有群配置</summary>
+            <textarea id="ov-export-text" rows="6" readonly placeholder="展开即自动生成" style="width:100%;font-family:monospace;font-size:12px;margin-top:var(--sp-2);"></textarea>
+            <div class="toolbar" style="margin-top:var(--sp-2);">
+              <button id="ov-export-copy" class="btn" type="button">复制 JSON</button>
+              <button id="ov-export-dl" class="btn btn-primary" type="button">下载备份文件</button>
+              <span class="hint-text" id="ov-export-msg"></span>
+            </div>
+          </details>
+          <details class="g-backup-sec" id="ov-import-sec">
+            <summary>导入所有群配置（按群号覆盖合并）</summary>
+            <div class="muted" style="margin-bottom:var(--sp-2);">已有群覆盖同名配置、备份里的新群自动创建、当前多余群不受影响。</div>
+            <textarea id="ov-import-text" rows="6" placeholder="把全局备份 JSON 完整粘贴到这里" style="width:100%;font-family:monospace;font-size:12px;"></textarea>
+            <div class="toolbar" style="margin-top:var(--sp-2);">
+              <button id="ov-import-file-btn" class="btn" type="button">选择文件…</button>
+              <button id="ov-import-go" class="btn btn-danger" type="button">确认覆盖导入</button>
+              <button id="ov-import-cancel" class="btn" type="button">清空</button>
+              <span class="hint-text" id="ov-import-name"></span>
+              <span class="hint-text" id="ov-import-msg"></span>
+            </div>
+            <input type="file" id="ov-import-file" accept=".json,application/json" style="display:none;" />
+          </details>
+          <p class="form-hint">单群备份在「群配置 → 群基础设置」每个群卡内；仅维护四块的备份在「定时与维护」页。</p>
         </div>
       </div>
 
@@ -85,7 +87,7 @@
           <h2>快速说明</h2>
         </div>
         <ul class="quick-help">
-          <li><b>群配置：</b>添加 / 删除群、备注名、启用开关、该群管理员，以及整套配置的 📤 导出 / 📥 导入。</li>
+          <li><b>群配置：</b>管理范围（勾选启用）、群基础设置（备注名 / 启用 / 该群管理员，单个群或批量）、群卡内「备份本群配置」。</li>
           <li><b>分类规则：</b>关键词 / 构建器 / 正则规则；文件类型内置漫画 <code>cbz/cbr</code>、电子书、文档等 130+ 种，也能自定义扩展名；可从文件名智能生成，也能扫描群文件批量生成，可立即执行一次分类。规则卡片默认收起，点「展开」编辑匹配内容/类型/排除词，也可一键全部展开或收起。</li>
           <li><b>定时与维护：</b>定时自动整理流水线（可多时间点）、按时间分文件夹的时效清理、容量提醒线（跟随定时任务播报）、查重规则与查重扫描。</li>
           <li><b>文件管理：</b>浏览文件夹、按类型筛选（漫画/电子书/音视频…）、勾选删除 / 移动、新建文件夹、关键词搜索并可发到群。</li>
@@ -148,7 +150,7 @@
           <div id="g-edit-single">
             <div class="toolbar g-edit-bar">
               <select id="g-edit-sel"></select>
-              <span class="hint-text" id="g-edit-hint">编辑该群基础信息与管理命令权限</span>
+              <span class="hint-text">编辑该群基础信息与管理命令权限</span>
             </div>
             <div id="g-edit-host"></div>
           </div>
@@ -193,25 +195,34 @@
         <div class="m-chips" id="m-chips"></div>
         <div class="toolbar" style="margin-bottom:0;">
           <button id="m-save" class="btn btn-primary" type="button">保存维护设置</button>
-          <button id="m-export" class="btn" type="button" title="导出本群「定时整理 / 容量 / 时效清理 / 查重」四块为 JSON，可复制给其他群导入"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>导出维护配置</button>
-          <button id="m-import" class="btn" type="button" title="选择此前导出的维护配置 JSON，覆盖本群这四块（不动规则和管理员）"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3m0 0 4 4m-4-4-4 4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>导入维护配置</button>
-          <input type="file" id="m-import-file" accept=".json,application/json" style="display:none;" />
-          <span class="hint-text" id="m-hint">每个分区标题右侧都有群徽章，标明正在编辑哪个群</span>
+          <span class="hint-text">仅本群「定时 / 容量 / 老文件 / 查重」四块，不含规则与管理员</span>
+          <button id="m-backup-toggle" class="btn btn-sm" type="button" style="margin-left:auto;">▸ 备份这些设置</button>
         </div>
-        <div id="m-import-panel" class="sub-panel" style="display:none;margin-top:10px;">
-          <div class="panel-title">导入维护配置（会覆盖该群「定时 / 容量 / 时效 / 查重」四块，规则和管理员不动）</div>
-          <textarea id="m-import-text" rows="4" placeholder="粘贴此前导出的 JSON，例如：{
-  \"cleanup\": { \"enabled\": true, \"crones\": [\"0 3 * * *\"] },
-  \"limits\": { \"count_limit\": 100 }
-}"></textarea>
-          <div class="toolbar" style="margin-bottom:0;">
-            <button id="m-import-go" class="btn btn-danger" type="button">确认覆盖导入</button>
-            <button id="m-import-pick" class="btn" type="button">选择文件…</button>
-            <button id="m-import-cancel" class="btn" type="button">收起</button>
-            <span class="hint-text" id="m-import-name"></span>
-            <span class="hint-text" id="m-import-msg" style="color:var(--accent)"></span>
-          </div>
-        </div>
+        <details id="m-backup" class="m-backup">
+          <summary class="m-backup-sum">备份 <b>本群维护设置</b>（定时 / 容量 / 老文件 / 查重）</summary>
+          <details class="g-backup-sec" id="m-export-sec">
+            <summary>导出维护设置</summary>
+            <textarea id="m-export-text" rows="4" readonly style="width:100%;font-family:monospace;font-size:12px;margin-top:var(--sp-2);" placeholder="展开即自动生成"></textarea>
+            <div class="toolbar" style="margin-top:var(--sp-2);">
+              <button id="m-export-copy" class="btn" type="button">复制 JSON</button>
+              <button id="m-export-dl" class="btn btn-primary" type="button">下载文件</button>
+              <span class="hint-text" id="m-export-msg"></span>
+            </div>
+          </details>
+          <details class="g-backup-sec" id="m-import-sec">
+            <summary>导入维护设置（覆盖这四块）</summary>
+            <div class="muted" style="margin-bottom:var(--sp-2);">只覆盖本群「定时 / 容量 / 老文件 / 查重」，规则与管理员不动。</div>
+            <textarea id="m-import-text" rows="4" placeholder="粘贴此前导出的维护设置 JSON"></textarea>
+            <div class="toolbar" style="margin-top:var(--sp-2);">
+              <button id="m-import-pick" class="btn" type="button">选择文件…</button>
+              <button id="m-import-go" class="btn btn-danger" type="button">确认覆盖导入</button>
+              <button id="m-import-cancel" class="btn" type="button">清空</button>
+              <span class="hint-text" id="m-import-name"></span>
+              <span class="hint-text" id="m-import-msg"></span>
+            </div>
+            <input type="file" id="m-import-file" accept=".json,application/json" style="display:none;" />
+          </details>
+        </details>
       </div>
       <div id="maint-body">
         <div class="section empty-state">请先在「群配置」添加群。</div>
@@ -220,20 +231,30 @@
 
     <!-- Tab 5: 文件管理 -->
     <section id="tab-files" class="tab-content">
-      <div class="section">
-        <div class="toolbar">
+      <div class="section g-shell">
+        <div class="section-header">
+          <h2>浏览与筛选</h2>
+          <span class="hint-text" id="f-status"></span>
+        </div>
+        <div class="toolbar f-bar">
           <select id="f-group"></select>
           <select id="f-folder"><option value="">根目录</option></select>
           <button id="f-type-btn" class="btn f-type-btn" type="button" title="按文件类型筛选（可多选，会记住上次选择）">类型：全部 ▾</button>
           <button id="f-refresh" class="btn btn-primary" type="button">刷新</button>
+          <button id="f-cleanup" class="btn" type="button" style="margin-left:auto;" title="按分类规则立即移动一次（与「分类规则」页同一逻辑）">触发分类</button>
+        </div>
+        <div class="toolbar type-bar" id="f-type-bar" style="display:none;"></div>
+        <div class="toolbar f-bar f-page-bar">
           <button id="f-prev" class="btn" type="button">上一页</button>
           <span class="hint-text" id="f-page"></span>
           <button id="f-next" class="btn" type="button">下一页</button>
-          <button id="f-cleanup" class="btn" type="button">触发分类</button>
-          <span class="hint-text" id="f-status"></span>
         </div>
-        <div class="toolbar type-bar" id="f-type-bar" style="display:none;"></div>
-        <div class="toolbar">
+
+        <div class="section-header" style="margin-top:var(--sp-4);">
+          <h2>批量操作</h2>
+          <span class="hint-text">先勾选文件行，再执行</span>
+        </div>
+        <div class="toolbar f-bar">
           <button id="f-del" class="btn btn-danger" type="button">删除勾选</button>
           <select id="f-move-target"><option value="">移动到…</option></select>
           <button id="f-move" class="btn" type="button">移动勾选</button>
@@ -241,12 +262,22 @@
             <input type="checkbox" id="f-selectall" /> 全选当前列表
           </label>
         </div>
-        <div class="toolbar">
+
+        <div class="section-header" style="margin-top:var(--sp-4);">
+          <h2>新建文件夹</h2>
+          <span class="hint-text">在所选群根目录创建</span>
+        </div>
+        <div class="toolbar f-bar">
           <input type="text" id="f-newfolder" placeholder="新建文件夹名（自定义）" />
           <button id="f-newfolder-btn" class="btn" type="button">新建文件夹</button>
         </div>
-        <div class="toolbar toolbar-divider">
-          <input type="text" id="f-search" placeholder="🔍 关键词查文件（扫根目录+所有子文件夹，回车搜索）" />
+
+        <div class="section-header" style="margin-top:var(--sp-4);">
+          <h2>搜索</h2>
+          <span class="hint-text">扫根目录与所有子文件夹；结果可直接发送</span>
+        </div>
+        <div class="toolbar f-bar">
+          <input type="text" id="f-search" placeholder="🔍 关键词查文件（回车搜索）" />
           <button id="f-search-btn" class="btn btn-primary" type="button">搜索</button>
           <span class="hint-text" id="f-search-status"></span>
         </div>
@@ -269,6 +300,6 @@
   </div>
 
   <div id="toast" class="toast hidden"></div>
-  <script type="module" src="./app.js?v=2.9.2"></script>
+  <script type="module" src="./app.js?v=2.9.3"></script>
 </body>
 </html>

@@ -1,4 +1,4 @@
-﻿// 群文件管理 - Plugin Pages 前端（v2.9.2：发送临时目录/清理策略 · 多群复制 · 未保存提示 · 精细视觉系统）
+﻿// 群文件管理 - Plugin Pages 前端（v2.9.3：发送临时目录/清理策略 · 多群复制 · 未保存提示 · 精细视觉系统）
 const bridge = window.AstrBotPluginPage;
 const $ = (id) => document.getElementById(id);
 
@@ -112,7 +112,7 @@ function pickRules(res) {
   return [];
 }
 
-const HELP_TEXT = `群文件管理 v2.9.2  指令速查（短前缀 /gf 等效 /群文件；设置类全部走本控制台）
+const HELP_TEXT = `群文件管理 v2.9.3  指令速查（短前缀 /gf 等效 /群文件；设置类全部走本控制台）
 
 【查看】
   /gf 状态
@@ -473,7 +473,10 @@ async function loadOverview() {
     body.style.display = show ? "" : "none";
     $("ov-backup-toggle").textContent = show ? "▾ 收起" : "▸ 展开";
   });
-  $("ov-export-gen").addEventListener("click", genExport);
+  // v2.9.3：展开「导出所有群配置」即自动生成，去掉重复的「生成并显示」
+  $("ov-export-sec").addEventListener("toggle", async () => {
+    if ($("ov-export-sec").open && !ovBackupJson()) await genExport();
+  });
   $("ov-export-copy").addEventListener("click", async () => {
     if (!ovBackupJson() && !await genExport()) return;
     copyText(ovBackupJson(), "已复制全局备份 JSON");
@@ -490,11 +493,8 @@ async function loadOverview() {
     setTimeout(() => URL.revokeObjectURL(a.href), 3000);
     toast("已下载全局备份文件");
   });
-  $("ov-import-toggle").addEventListener("click", () => {
-    const panel = $("ov-import-panel");
-    const show = panel.style.display === "none";
-    panel.style.display = show ? "" : "none";
-    if (show) $("ov-import-msg").textContent = "";
+  $("ov-import-sec").addEventListener("toggle", () => {
+    if (!$("ov-import-sec").open) { $("ov-import-msg").textContent = ""; $("ov-import-name").textContent = ""; }
   });
   $("ov-import-file-btn").addEventListener("click", () => { $("ov-import-file").click(); });
   $("ov-import-file").addEventListener("change", async (ev) => {
@@ -505,7 +505,7 @@ async function loadOverview() {
     $("ov-import-name").textContent = "已读入文件：" + file.name;
     $("ov-import-msg").textContent = "已读入，请检查内容后点「确认覆盖导入」";
   });
-  $("ov-import-cancel").addEventListener("click", () => { $("ov-import-panel").style.display = "none"; });
+  $("ov-import-cancel").addEventListener("click", () => { $("ov-import-text").value = ""; $("ov-import-name").textContent = ""; $("ov-import-msg").textContent = ""; $("ov-import-sec").open = false; });
   $("ov-import-go").addEventListener("click", async (ev) => {
     const btn = ev.currentTarget;
     if (!armConfirm(btn, "⚠ 再点一次：覆盖全部")) return;
@@ -532,7 +532,7 @@ async function loadOverview() {
       $("ov-import-text").value = "";
       $("ov-import-name").textContent = "";
       loadOverview();
-      setTimeout(() => { $("ov-import-panel").style.display = "none"; }, 800);
+      setTimeout(() => { $("ov-import-sec").open = false; }, 800);
     } catch (e) {
       msg.textContent = "导入失败：" + e.message;
     }
@@ -690,7 +690,7 @@ function renderGroupsViews() {
   renderEditCard();
   renderBatchList();
 }
-// v2.9.2：单个群 / 批量编辑（批量只在主列表上勾选，不牺牲单群折叠卡）
+// v2.9.3：单个群 / 批量编辑（批量只在主列表上勾选，不牺牲单群折叠卡）
 function switchEditMode(mode) {
   document.querySelectorAll("#g-edit-modes .subchip").forEach((b) =>
     b.classList.toggle("active", b.dataset.mode === mode));
@@ -824,7 +824,6 @@ function renderGroupCard(g) {
         <span class="g-sub hint">${g.enabled === false ? "本群已停用" : "本群已启用"} · 管理员 ${Array.isArray(g.admins) && g.admins.length ? g.admins.length : 0} 人</span>
       </span>
       <span class="group-head-actions">
-        <button class="g-more btn btn-sm" type="button" title="导出 / 导入该群配置">⋯ 配置备份</button>
         <button class="g-collapse btn btn-sm" type="button" title="折叠/展开本群">▾ 折叠</button>
       </span>
     </h2>
@@ -852,27 +851,27 @@ function renderGroupCard(g) {
     </div>
 
     <details class="g-backup">
-      <summary>导出 / 导入配置（整群迁移或备份）</summary>
-      <div class="g-export-panel sub-panel" style="display:none;">
-        <div class="muted" style="margin-bottom:var(--sp-2);">导出该群全部配置（规则 / 定时 / 容量 / 查重）：</div>
-        <textarea class="ge-text" rows="6" readonly style="width:100%;font-family:monospace;font-size:12px;"></textarea>
+      <summary>备份 <b>本群</b> 配置（导出 / 导入，整群迁移用）</summary>
+      <p class="g-backup-scope">范围：本群的规则 / 定时 / 容量 / 查重 / 管理员。导入会覆盖本群现有全部设置，不影响其他群。</p>
+      <details class="g-backup-sec">
+        <summary>导出本群配置</summary>
+        <textarea class="ge-text" rows="6" readonly style="width:100%;font-family:monospace;font-size:12px;" placeholder="展开此处即自动生成"></textarea>
         <div class="toolbar" style="margin-top:var(--sp-2);">
-          <button class="ge-gen btn" type="button">生成并显示</button>
           <button class="ge-copy btn" type="button">复制 JSON</button>
           <button class="ge-dl btn btn-primary" type="button">下载文件</button>
           <span class="ge-msg hint-text"></span>
         </div>
-      </div>
-      <div class="g-import-panel sub-panel" style="display:none;">
-        <div class="muted" style="margin-bottom:var(--sp-2);">导入配置（覆盖该群现有全部设置）：</div>
-        <textarea class="gi-text" rows="6" placeholder="把导出的 JSON 完整粘贴到这里" style="width:100%;font-family:monospace;font-size:12px;"></textarea>
+      </details>
+      <details class="g-backup-sec">
+        <summary>导入本群配置（覆盖）</summary>
+        <textarea class="gi-text" rows="6" placeholder="粘贴本群导出的 JSON，或点下方「选择文件」" style="width:100%;font-family:monospace;font-size:12px;"></textarea>
         <div class="toolbar" style="margin-top:var(--sp-2);">
           <button class="gi-file btn" type="button">选择文件…</button>
           <button class="gi-do btn btn-danger" type="button">确认覆盖导入</button>
-          <button class="gi-cancel btn" type="button">取消</button>
+          <button class="gi-cancel btn" type="button">清空</button>
           <span class="gi-msg hint-text"></span>
         </div>
-      </div>
+      </details>
     </details>
 
     <div class="g-danger-zone">
@@ -953,10 +952,10 @@ function renderGroupCard(g) {
     }
   });
 
-  // ---- 导出面板 ----
-  const exportPanel = card.querySelector(".g-export-panel");
-  const geText = exportPanel.querySelector(".ge-text");
-  const geMsg = exportPanel.querySelector(".ge-msg");
+  // ---- 导出（v2.9.3：展开「导出本群配置」即自动生成，去掉重复的「生成并显示」按钮）----
+  const exportSec = card.querySelectorAll(".g-backup-sec")[0];
+  const geText = card.querySelector(".ge-text");
+  const geMsg = card.querySelector(".ge-msg");
   let gePayload = null;
   const loadExport = async () => {
     geMsg.textContent = "加载中…";
@@ -974,22 +973,25 @@ function renderGroupCard(g) {
     }
   };
   const backupWrap = card.querySelector(".g-backup");
-  if (backupWrap) backupWrap.addEventListener("toggle", async () => {
-    if (backupWrap.open && !gePayload) await loadExport();
+  if (exportSec) exportSec.addEventListener("toggle", async () => {
+    if (exportSec.open && !gePayload) await loadExport();
   });
-  exportPanel.querySelector(".ge-gen").addEventListener("click", loadExport);
+  if (backupWrap) backupWrap.addEventListener("toggle", () => {
+    if (!backupWrap.open) { geMsg.textContent = ""; }
+  });
 
-  exportPanel.querySelector(".ge-copy").addEventListener("click", async () => {
-    if (!gePayload) { geMsg.textContent = "请先点「生成并显示」"; return; }
+  card.querySelector(".ge-copy").addEventListener("click", async () => {
+    if (!gePayload) { geMsg.textContent = "正在生成…"; await loadExport(); }
+    if (!gePayload) return;
     try {
       await navigator.clipboard.writeText(JSON.stringify(gePayload, null, 2));
-      geMsg.textContent = "✅ 已复制到剪贴板，可直接粘贴到导入面板";
+      geMsg.textContent = "已复制到剪贴板，可直接粘贴到下方导入框";
     } catch (e) {
       geMsg.textContent = "复制失败（浏览器限制），请手动选中上方文本框内容复制：" + e.message;
     }
   });
-  exportPanel.querySelector(".ge-dl").addEventListener("click", () => {
-    if (!gePayload) { geMsg.textContent = "请先点「生成并显示」"; return; }
+  card.querySelector(".ge-dl").addEventListener("click", () => {
+    if (!gePayload) { geMsg.textContent = "正在生成…"; loadExport(); return; }
     try {
       const blob = new Blob([JSON.stringify(gePayload, null, 2)], { type: "application/json" });
       const a = document.createElement("a");
@@ -1005,15 +1007,12 @@ function renderGroupCard(g) {
     }
   });
 
-  // ---- 导入面板 ----
-  const importPanel = card.querySelector(".g-import-panel");
-  const giText = importPanel.querySelector(".gi-text");
-  const giMsg = importPanel.querySelector(".gi-msg");
-  // 导入面板跟着 details 显示；打开时清空提示
-  if (backupWrap) backupWrap.addEventListener("toggle", () => {
-    importPanel.style.display = backupWrap.open ? "block" : "none";
-    exportPanel.style.display = backupWrap.open ? "block" : "none";
-    if (!backupWrap.open) giMsg.textContent = "";
+  // ---- 导入（v2.9.3：独立的折叠节；「清空」真正复位）----
+  const importSec = card.querySelectorAll(".g-backup-sec")[1];
+  const giText = card.querySelector(".gi-text");
+  const giMsg = card.querySelector(".gi-msg");
+  if (importSec) importSec.addEventListener("toggle", () => {
+    if (!importSec.open) giMsg.textContent = "";
   });
   const doImport = async (txt) => {
     const raw = String(txt || "").replace(/^\uFEFF/, "").trim();
@@ -1034,21 +1033,24 @@ function renderGroupCard(g) {
         throw new Error("无法识别的配置结构（需要 rules 字段）；若是旧版文件，请用当前版本重新导出");
       }
       data.group_id = String(g.group_id);
-      const giDoBtn = importPanel.querySelector(".gi-do");
-      if (!armConfirm(giDoBtn, "⚠ 再点一次：覆盖导入本群配置")) { giMsg.textContent = ""; return; }
+      const giDoBtn = card.querySelector(".gi-do");
+      if (!armConfirm(giDoBtn, "再点一次：覆盖导入本群配置")) { giMsg.textContent = ""; return; }
       giMsg.textContent = "导入中…";
       const r = await bridge.apiPost("import", { data, target_gid: String(g.group_id) });
-      giMsg.textContent = "✅ 导入成功（" + ((r && r.saved) || g.group_id) + "，字段：" + ((r && r.fields && r.fields.join("/")) || "配置") + "）";
-      importPanel.style.display = "none";
+      giMsg.textContent = "导入成功（" + ((r && r.saved) || g.group_id) + "，字段：" + ((r && r.fields && r.fields.join("/")) || "配置") + "）";
       toast("导入成功，已刷新");
       loadGroups();
     } catch (err) {
       giMsg.textContent = "导入失败：" + err.message;
     }
   };
-  importPanel.querySelector(".gi-do").addEventListener("click", () => doImport(giText.value));
-  importPanel.querySelector(".gi-file").addEventListener("click", () => { card.querySelector(".g-import-file").click(); });
-  importPanel.querySelector(".gi-cancel").addEventListener("click", () => { importPanel.style.display = "none"; });
+  card.querySelector(".gi-do").addEventListener("click", () => doImport(giText.value));
+  card.querySelector(".gi-file").addEventListener("click", () => { card.querySelector(".g-import-file").click(); });
+  card.querySelector(".gi-cancel").addEventListener("click", () => {
+    giText.value = "";
+    giMsg.textContent = "";
+    if (importSec) importSec.open = false;
+  });
   card.querySelector(".g-import-file").addEventListener("change", (e) => {
     const f = e.target.files[0];
     e.target.value = "";  // 允许连续选择同一文件
@@ -1118,7 +1120,7 @@ function renderScopeList(available) {
     try {
       await bridge.apiPost("groups", { group_id: gid, enabled: checked });
       toast(checked ? `✅ 群 ${gid} 已启用本插件` : `⛔ 群 ${gid} 已停用（配置保留，勾回来即恢复）`);
-      // v2.9.2：只更新本地状态与行样式，不再整页重载（搜索框焦点与滚动位置保持）
+      // v2.9.3：只更新本地状态与行样式，不再整页重载（搜索框焦点与滚动位置保持）
       const cfg = groupsData.find((g) => String(g.group_id) === String(gid));
       if (cfg) cfg.enabled = checked;
       else groupsData.push({ group_id: String(gid), name: "", enabled: checked, rules: [] });
@@ -2428,43 +2430,69 @@ async function loadMaintTab() {
 }
 $("m-save").addEventListener("click", () => { if (maintCollect) maintCollect(); });
 
-// v2.1.2：维护页导出 / 导入（只动 定时整理 / 容量 / 时效清理 / 查重 四块，不碰规则和管理员）
-$("m-export").addEventListener("click", async () => {
+// v2.9.3：维护页备份收到一个折叠节内（导出 / 导入两个子折叠，展开导出即自动生成）
+let mExportPayload = null;
+const buildMaintPayload = (data, gid) => ({
+  app: "groupfile-console-maint",
+  group_id: (data && data.group_id) || gid,
+  name: (data && data.name) || "",
+  cleanup: (data && data.cleanup) || {},
+  limits: (data && data.limits) || {},
+  ttl: (data && data.ttl) || {},
+  dupe_rule: (data && data.dupe_rule) || {},
+  export_version: "2.9.3",
+});
+async function loadMaintExport() {
   const gid = maintGroupId || (groupsData[0] && groupsData[0].group_id);
-  if (!gid) { toast("请先选择群", "error"); return; }
+  const msg = $("m-export-msg");
+  if (!gid) { if (msg) msg.textContent = "请先选择群"; return null; }
   try {
+    if (msg) msg.textContent = "生成中…";
     const r = await bridge.apiGet("export", { gid });
     const data = (r && r.data) || r || {};
-    const payload = {
-      app: "groupfile-console-maint",
-      group_id: data.group_id || gid,
-      name: data.name || "",
-      cleanup: data.cleanup || {},
-      limits: data.limits || {},
-      ttl: data.ttl || {},
-      dupe_rule: data.dupe_rule || {},
-      export_version: "2.9.2",
-    };
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    const g = groupsData.find((x) => String(x.group_id) === String(gid));
-    a.download = "维护配置_" + ((g && g.name) || gid) + "_" + gid + ".json";
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(a.href), 3000);
-    toast("已导出维护配置（含 定时 / 容量 / 时效 / 查重）");
+    mExportPayload = buildMaintPayload(data, gid);
+    if ($("m-export-text")) $("m-export-text").value = JSON.stringify(mExportPayload, null, 2);
+    if (msg) msg.textContent = "已生成（定时 / 容量 / 老文件 / 查重）";
+    return mExportPayload;
   } catch (e) {
-    toast("导出失败：" + e.message, "error");
+    if (msg) msg.textContent = "导出失败：" + e.message;
+    return null;
+  }
+}
+$("m-backup-toggle").addEventListener("click", () => {
+  const box = $("m-backup");
+  box.open = !box.open;
+  $("m-backup-toggle").textContent = box.open ? "▾ 收起备份" : "▸ 备份这些设置";
+});
+$("m-backup").addEventListener("toggle", () => {
+  $("m-backup-toggle").textContent = $("m-backup").open ? "▾ 收起备份" : "▸ 备份这些设置";
+});
+$("m-export-sec").addEventListener("toggle", async () => {
+  if ($("m-export-sec").open && !mExportPayload) await loadMaintExport();
+});
+$("m-export-copy").addEventListener("click", async () => {
+  if (!mExportPayload) await loadMaintExport();
+  if (!mExportPayload) return;
+  try {
+    await navigator.clipboard.writeText(JSON.stringify(mExportPayload, null, 2));
+    $("m-export-msg").textContent = "已复制到剪贴板";
+  } catch (e) {
+    $("m-export-msg").textContent = "复制失败，请手动选中文本框复制：" + e.message;
   }
 });
-
-$("m-import").addEventListener("click", () => {
-  const gid = maintGroupId || (groupsData[0] && groupsData[0].group_id);
-  if (!gid) { toast("请先选择群", "error"); return; }
-  const panel = $("m-import-panel");
-  panel.style.display = panel.style.display === "none" ? "" : "none";
+$("m-export-dl").addEventListener("click", async () => {
+  if (!mExportPayload) await loadMaintExport();
+  if (!mExportPayload) return;
+  const gid = mExportPayload.group_id;
+  const g = groupsData.find((x) => String(x.group_id) === String(gid));
+  const blob = new Blob([JSON.stringify(mExportPayload, null, 2)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "维护配置_" + ((g && g.name) || gid) + "_" + gid + ".json";
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+  $("m-export-msg").textContent = "已触发下载";
+  toast("已导出维护配置");
 });
 $("m-import-pick").addEventListener("click", () => { $("m-import-file").click(); });
 $("m-import-file").addEventListener("change", async (ev) => {
@@ -2474,8 +2502,7 @@ $("m-import-file").addEventListener("change", async (ev) => {
   $("m-import-text").value = await file.text();
   $("m-import-name").textContent = "已读入文件：" + file.name;
   $("m-import-msg").textContent = "已读入，请检查内容后点「确认覆盖导入」";
-});
-$("m-import-cancel").addEventListener("click", () => { $("m-import-panel").style.display = "none"; });
+});$("m-import-cancel").addEventListener("click", () => { $("m-import-text").value = ""; $("m-import-name").textContent = ""; $("m-import-msg").textContent = ""; $("m-import-sec").open = false; });
 $("m-import-go").addEventListener("click", async (ev) => {
   const gid = maintGroupId || (groupsData[0] && groupsData[0].group_id);
   if (!gid) { toast("请先选择群", "error"); return; }
@@ -2525,7 +2552,7 @@ $("m-import-go").addEventListener("click", async (ev) => {
     toast("已导入：" + got + "，配置已刷新");
     $("m-import-text").value = "";
     $("m-import-name").textContent = "";
-    setTimeout(() => { $("m-import-panel").style.display = "none"; }, 600);
+    setTimeout(() => { $("m-import-sec").open = false; }, 600);
     loadMaintTab();
   } catch (e) {
     msg.textContent = "导入失败：" + e.message;
@@ -3513,7 +3540,7 @@ window.addEventListener("beforeunload", (e) => {
   e.returnValue = "";
 });
 
-// ---------- 任务（v2.9.2） ----------
+// ---------- 任务（v2.9.3） ----------
 // ---------- init ----------
 (async function init() {
   try {

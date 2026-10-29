@@ -798,3 +798,21 @@ input[type="checkbox"]:disabled{opacity:.45;cursor:not-allowed}
 .g-batch-flags{margin-left:auto;font-size:11.5px;color:var(--muted);font-variant-numeric:tabular-nums}
 .g-batch-bar{flex-wrap:wrap;gap:var(--sp-2);margin-top:var(--sp-3)}
 .g-batch-bar .g-batch-admins{flex:1 1 200px}
+
+/* v2.9.3 备份折叠节（群卡内两级 details） */
+.g-backup-scope{margin:var(--sp-2) 0 0;font-size:11.5px;color:var(--muted)}
+.g-backup-sec{margin-top:var(--sp-2)}
+.g-backup-sec summary{cursor:pointer;font-size:12px;color:var(--text-2);list-style:none;padding:var(--sp-1) 0}
+.g-backup-sec summary::before{content:"▸ ";color:var(--muted)}
+.g-backup-sec[open] summary::before{content:"▾ "}
+.g-backup-sec .ge-text,.g-backup-sec .gi-text{margin-top:var(--sp-2)}
+
+/* v2.9.3 维护页备份折叠 */
+.m-backup{margin-top:var(--sp-2)}
+.m-backup-sum{cursor:pointer;font-size:12px;color:var(--text-2);list-style:none;padding:var(--sp-2) 0}
+.m-backup-sum::before{content:"▸ ";color:var(--muted)}
+.m-backup[open] .m-backup-sum::before{content:"▾ "}
+
+/* v2.9.3 文件页分区 */
+.f-bar{margin-bottom:var(--sp-2)}
+.f-page-bar{margin-top:var(--sp-1)}
