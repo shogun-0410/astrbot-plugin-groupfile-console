@@ -284,6 +284,8 @@ class GroupFileConsole(Star):
 
     async def _cleanup_after(self, paths: list[Path], wait: int, attempt: int = 0) -> None:
         await asyncio.sleep(wait)
+        if not self.send_settings()["enabled"]:
+            return  # 等待期间用户关掉了自动清理：不再执行
         left: list[Path] = []
         for p in paths:
             if os.path.realpath(str(p)) in self._send_inflight:
@@ -347,7 +349,8 @@ class GroupFileConsole(Star):
     async def _startup_sweep(self) -> None:
         await asyncio.sleep(10)
         try:
-            await self.cleanup_sweep(force=True)
+            # 自动清理关掉时不做自动清扫（用户点「立即清理」仍可强制清）
+            await self.cleanup_sweep(force=False)
         except Exception:
             pass
 
