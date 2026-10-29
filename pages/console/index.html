@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>群文件管理</title>
-  <link rel="stylesheet" href="./style.css?v=2.9.0">
+  <link rel="stylesheet" href="./style.css?v=2.9.1">
 </head>
 <body>
   <div class="container">
@@ -15,7 +15,7 @@
           <h1>群文件管理</h1>
           <p class="subtitle">多群配置 · 自动分类 · 定时整理流水线（分类/时效/容量）· 查重维护，修改保存后立即生效</p>
         </div>
-        <div class="brand-meta"><span class="ver-chip">v2.9.0</span></div>
+        <div class="brand-meta"><span class="ver-chip">v2.9.1</span></div>
       </div>
       <nav class="tabs">
         <button class="tab-btn active" data-tab="overview" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg><span>总览</span></button>
@@ -96,44 +96,57 @@
 
     <!-- Tab 2: 群配置（群基础信息） -->
     <section id="tab-groups" class="tab-content">
-      <div class="subnav" id="g-subnav">
-        <button class="subchip active" data-pane="scope" type="button">管理范围</button>
-        <button class="subchip" data-pane="edit" type="button">群基础设置</button>
-      </div>
-      <div id="g-pane-scope" class="g-pane">
-<div class="section">
-        <div class="section-header">
-          <h2>管理范围</h2>
-          <span class="hint-text">勾选的群使用本插件，不勾选的不用</span>
+      <div class="section g-shell">
+        <div class="subnav g-subnav" id="g-subnav">
+          <button class="subchip active" data-pane="scope" type="button">管理范围</button>
+          <button class="subchip" data-pane="edit" type="button">群基础设置</button>
         </div>
-        <div class="toolbar">
-          <input type="text" id="g-search" placeholder="搜索群名 / 群号…" style="flex:1 1 180px;" />
-          <span class="hint-text g-scope-count">加载中…</span>
-        </div>
-        <div id="g-scope-list" class="g-scope-list"></div>
-        <p class="form-hint">💡 勾选=启用（未配置会自动创建）；取消勾选=本群停用（配置保留，随时勾回来）。下方「高级编辑」可调每个群的规则与定时。</p>
-      </div>
-      <div class="section">
-        <div class="section-header">
-          <h2>高级编辑 / 手动添加</h2>
-          <span class="hint-text">从 bot 所在群选择，群号自动填好；也可以手动输入</span>
-        </div>
-        <div class="toolbar">
-          <select id="g-pick"><option value="">— 从 bot 所在群选择 —</option></select>
-          <input type="text" id="g-gid" placeholder="群号（必填）" />
-          <input type="text" id="g-name" placeholder="备注名（可选）" />
-          <button class="btn btn-primary" id="g-save" type="button">保存群</button>
-          <button class="btn" id="g-reset" type="button">清空表单</button>
-        </div>
-        <p class="form-hint">💡 已配置的群在下方列表中；群里发命令时群号可省略，默认管你发命令所在的群。</p>
-      </div>
+
+        <div id="g-pane-scope" class="g-pane">
+          <div class="section-header">
+            <h2>管理范围</h2>
+            <span class="hint-text">勾选用本插件，取消=停用（配置保留）</span>
+            <span class="hint-text g-scope-count g-scope-count-top"></span>
           </div>
-      <div id="g-pane-edit" class="g-pane" style="display:none;">
-        <div class="toolbar" style="margin-bottom:10px;">
-          <select id="g-edit-sel" style="flex:1 1 260px;max-width:340px;"></select>
-          <span class="hint-text">选一个群，编辑它的基础设置与导入导出</span>
+          <div class="toolbar g-scope-toolbar">
+            <input type="text" id="g-search" placeholder="搜索群名 / 群号…" />
+          </div>
+          <div id="g-scope-list" class="g-scope-list"></div>
+          <p class="form-hint">勾选=启用（未配置会自动创建）；取消勾选=停用（配置保留，随时勾回来）。每行「配置」进入该群基础设置。</p>
+
+          <div class="g-add-row">
+            <button class="g-add-toggle btn btn-sm" type="button">＋ 手动添加 / 指定群号</button>
+            <span class="hint-text">机器人拉不到群列表时用</span>
+          </div>
+          <div class="sub-panel g-add-panel" style="display:none;">
+            <div class="form-grid">
+              <div class="field">
+                <label>从机器人所在群选择</label>
+                <select id="g-pick"><option value="">— 选择群 —</option></select>
+              </div>
+              <div class="field">
+                <label>群号（必填）</label>
+                <input type="text" id="g-gid" placeholder="例如 1128651283" />
+              </div>
+              <div class="field">
+                <label>备注名（可选）</label>
+                <input type="text" id="g-name" placeholder="留空用群名" />
+              </div>
+            </div>
+            <div class="toolbar g-add-actions">
+              <button class="btn btn-primary" id="g-save" type="button">保存群</button>
+              <button class="btn" id="g-reset" type="button">清空表单</button>
+            </div>
+          </div>
         </div>
-        <div id="g-edit-host"></div>
+
+        <div id="g-pane-edit" class="g-pane" style="display:none;">
+          <div class="toolbar g-edit-bar">
+            <select id="g-edit-sel"></select>
+            <span class="hint-text" id="g-edit-hint">编辑该群基础信息与管理命令权限</span>
+          </div>
+          <div id="g-edit-host"></div>
+        </div>
       </div>
     </section>
 
@@ -234,6 +247,6 @@
   </div>
 
   <div id="toast" class="toast hidden"></div>
-  <script type="module" src="./app.js?v=2.9.0"></script>
+  <script type="module" src="./app.js?v=2.9.1"></script>
 </body>
 </html>

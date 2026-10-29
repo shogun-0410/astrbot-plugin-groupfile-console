@@ -245,12 +245,19 @@ input[type="number"]::-webkit-outer-spin-button{opacity:.55}
 label.field > span,.field-label{font-size:12px;color:var(--text-2);font-weight:500}
 
 /* ============ 子面板（浮层卡）============ */
+.g-scope-toolbar{margin-bottom:var(--sp-2)}
+.g-scope-count-top{font-size:11.5px}
+.g-add-row{display:flex;align-items:center;gap:var(--sp-2);margin-top:var(--sp-3)}
+.g-add-actions{margin:var(--sp-3) 0 0}
+.g-edit-bar{margin-bottom:var(--sp-3)}
+.g-edit-bar select{flex:1 1 260px;max-width:360px}
 .sub-panel{
   border:1px solid var(--border);border-radius:var(--r-ctl);
   background:var(--bg2);padding:14px;margin:10px 0;
   box-shadow:0 4px 16px rgba(0,0,0,.18);
 }
-[data-theme="light"] .sub-panel{background:#f4f6fb;box-shadow:none}
+[data-theme="light"] .g-scope-toolbar{margin-bottom:var(--sp-2)}
+.sub-panel{background:#f4f6fb;box-shadow:none}
 
 /* ============ 徽章 / 标签 ============ */
 .badge{
@@ -347,11 +354,13 @@ label.field > span,.field-label{font-size:12px;color:var(--text-2);font-weight:5
 .picker-count{font-size:12.5px;color:var(--text-2);font-weight:500}
 
 /* ============ 维护页群 chips ============ */
-.m-chips,.subnav{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px}
+.m-chips,.subnav{display:flex;flex-wrap:wrap;gap:var(--sp-2);margin-bottom:var(--sp-3)}
 /* 扫描/测试/执行操作按钮：等宽网格，避免挤在一行 */
 .ops-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(185px,1fr));gap:10px;margin-bottom:6px}
 .ops-grid .btn{justify-content:center;text-align:center}
-.subnav{margin:2px 0 14px}
+.subnav{margin:0 0 var(--sp-3)}
+.g-shell{padding:var(--pad-card) 18px}
+.g-subnav{margin-bottom:var(--sp-4)}
 .m-chip,.subchip{
   display:inline-flex;align-items:center;gap:6px;padding:4px 11px;
   border-radius:var(--r-chip);border:1px solid var(--border);background:var(--surface);
@@ -754,4 +763,26 @@ input[type="checkbox"]:disabled{opacity:.45;cursor:not-allowed}
   .tab-btn{padding:7px 9px}
   .rules-row .row{gap:6px}
   .help-pre{font-size:12px}
-}
+}/* v2.9.1 群配置页：卡片内两级导航 + 群卡栅格 */
+.g-shell .section-header{margin-bottom:var(--sp-2)}
+.g-scope-count{margin-left:auto}
+.g-scope-row .g-jump{flex:none}
+.group-head{padding:var(--sp-3) var(--pad-card);gap:var(--sp-3)}
+.g-grid{display:flex;flex-direction:column;gap:var(--sp-1);flex:1 1 220px;min-width:180px}
+.g-top{display:flex;align-items:center;gap:var(--sp-2);flex-wrap:wrap}
+.g-top .g-gid{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+.g-top .g-name{flex:1 1 140px;min-width:120px;max-width:280px}
+.g-sub{font-size:11.5px}
+.group-head-actions{gap:var(--sp-1);margin-left:auto}
+.g-basic{display:flex;flex-direction:column;gap:var(--sp-2);padding:var(--pad-card)}
+.g-field-label{font-size:12px;color:var(--text-2);font-weight:500}
+.g-admin-row{margin:0;gap:var(--sp-2)}
+.g-admin-row .g-admins{flex:1 1 200px}
+.g-save-bar{margin:var(--sp-2) 0 0;gap:var(--sp-2)}
+.g-backup{border-top:1px solid var(--border);padding:var(--sp-3) var(--pad-card)}
+.g-backup summary{cursor:pointer;font-size:12.5px;color:var(--text-2);user-select:none;list-style:none}
+.g-backup summary::before{content:"▸ ";color:var(--muted)}
+.g-backup[open] summary::before{content:"▾ "}
+.g-backup .sub-panel{margin:var(--sp-2) 0 0}
+.g-danger-zone{display:flex;align-items:center;gap:var(--sp-2);flex-wrap:wrap;justify-content:space-between;
+  border-top:1px solid var(--border);padding:var(--sp-3) var(--pad-card)}

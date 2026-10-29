@@ -69,7 +69,7 @@ except Exception:  # 旧版 AstrBot / 开发环境
 
 PLUGIN_NAME = "astrbot_plugin_groupfile_console"
 CMD = "群文件"
-VERSION = "2.9.0"
+VERSION = "2.9.1"
 
 GB = 1024 ** 3
 LISTING_TTL = 300  # 列表上下文有效期（秒）

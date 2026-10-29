@@ -1,4 +1,4 @@
-﻿// 群文件管理 - Plugin Pages 前端（v2.9.0：发送临时目录/清理策略 · 多群复制 · 未保存提示 · 精细视觉系统）
+﻿// 群文件管理 - Plugin Pages 前端（v2.9.1：发送临时目录/清理策略 · 多群复制 · 未保存提示 · 精细视觉系统）
 const bridge = window.AstrBotPluginPage;
 const $ = (id) => document.getElementById(id);
 
@@ -112,7 +112,7 @@ function pickRules(res) {
   return [];
 }
 
-const HELP_TEXT = `群文件管理 v2.9.0  指令速查（短前缀 /gf 等效 /群文件；设置类全部走本控制台）
+const HELP_TEXT = `群文件管理 v2.9.1  指令速查（短前缀 /gf 等效 /群文件；设置类全部走本控制台）
 
 【查看】
   /gf 状态
@@ -699,6 +699,12 @@ $("g-subnav").addEventListener("click", (ev) => {
   if (b) switchGroupPane(b.dataset.pane);
 });
 $("g-edit-sel").addEventListener("change", renderEditCard);
+document.querySelector(".g-add-toggle") && document.querySelector(".g-add-toggle").addEventListener("click", (ev) => {
+  const panel = document.querySelector(".g-add-panel");
+  const show = panel.style.display === "none";
+  panel.style.display = show ? "" : "none";
+  ev.currentTarget.textContent = show ? "－ 收起手动添加" : "＋ 手动添加 / 指定群号";
+});
 function renderEditCard() {
   const sel = $("g-edit-sel");
   const host = $("g-edit-host");
@@ -725,60 +731,68 @@ function renderGroupCard(g) {
   card.innerHTML = `
     <h2 class="group-head">
       <span class="g-head-ava">${esc((g.name || g.group_id || "群").toString().replace(/^(\s|\[|【)+/, "").charAt(0) || "群")}</span>
-      <span class="g-gid">${esc(g.group_id)}</span>
-      <input class="g-name" type="text" value="${esc(g.name || "")}" placeholder="备注名" />
+      <span class="g-grid">
+        <span class="g-top">
+          <span class="g-gid">${esc(g.group_id)}</span>
+          <input class="g-name" type="text" value="${esc(g.name || "")}" placeholder="备注名（可选）" />
+        </span>
+        <span class="g-sub hint">${g.enabled === false ? "本群已停用" : "本群已启用"} · 管理员 ${Array.isArray(g.admins) && g.admins.length ? g.admins.length : 0} 人</span>
+      </span>
       <span class="group-head-actions">
-        <button class="g-export btn btn-sm" type="button" title="导出该群全部配置为 JSON 文件，会下载到浏览器下载目录"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>导出配置</button>
-        <button class="g-import btn btn-sm" type="button" title="选择一个此前导出的 JSON 文件，覆盖导入该群配置"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3m0 0 4 4m-4-4-4 4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>导入配置</button>
-        <button class="g-del btn btn-sm btn-danger" type="button">删除群</button>
+        <button class="g-more btn btn-sm" type="button" title="导出 / 导入该群配置">⋯ 配置备份</button>
         <button class="g-collapse btn btn-sm" type="button" title="折叠/展开本群">▾ 折叠</button>
       </span>
     </h2>
     <input type="file" class="g-import-file" accept=".json,application/json" style="display:none;" />
 
-    <div class="g-export-panel sub-panel" style="display:none;">
-      <div class="muted" style="margin-bottom:6px;">导出该群全部配置（规则 / 定时 / 容量 / 查重），可备份或迁移到其他群：</div>
-      <textarea class="ge-text" rows="8" readonly style="width:100%;font-family:monospace;font-size:12px;"></textarea>
-      <div class="toolbar" style="margin-top:6px;">
-        <button class="ge-gen btn" type="button">生成并显示</button>
-        <button class="ge-copy btn" type="button">复制 JSON</button>
-        <button class="ge-dl btn btn-primary" type="button">⬇ 下载文件</button>
-        <button class="ge-close btn" type="button">关闭</button>
-        <span class="ge-msg hint-text"></span>
-      </div>
-    </div>
-
-    <div class="g-import-panel sub-panel" style="display:none;">
-      <div class="muted" style="margin-bottom:6px;">导入配置（会覆盖该群现有全部设置）：粘贴此前导出的 JSON，或点「选择文件」：</div>
-      <textarea class="gi-text" rows="8" placeholder='把导出的 JSON 完整粘贴到这里' style="width:100%;font-family:monospace;font-size:12px;"></textarea>
-      <div class="toolbar" style="margin-top:6px;">
-        <button class="gi-file btn" type="button">选择文件…</button>
-        <button class="gi-do btn btn-danger" type="button">确认覆盖导入</button>
-        <button class="gi-cancel btn" type="button">取消</button>
-        <span class="gi-msg hint-text"></span>
-      </div>
-    </div>
-
-    <div class="sub-panel g-basic">
-      <div class="muted g-basic-title">⚙ 群基础信息</div>
+    <div class="g-basic">
       <label class="enable-check" title="关闭后该群不执行定时整理/任何自动推送；手动命令和本控制台仍可用">
         <input type="checkbox" class="g-enabled" ${g.enabled === false ? "" : "checked"} />
-        <span class="ec-main">✅ 本群启用插件</span>
+        <span class="ec-main">本群启用插件</span>
         <span class="ec-sub">关闭后仅停定时整理与推送，手动命令 / 控制台仍可用</span>
       </label>
       <div class="field">
-        <label class="muted" style="margin-bottom:5px;">👤 该群文件管理员 QQ</label>
-        <div class="toolbar" style="margin:0;">
+        <label class="g-field-label">该群文件管理员 QQ</label>
+        <div class="toolbar g-admin-row">
           <input type="text" class="g-admins" value="${esc(admins)}" placeholder="1423178195,3841157342" />
-          <button class="g-pick-admin btn" type="button">👥 选成员</button>
+          <button class="g-pick-admin btn" type="button">选成员</button>
         </div>
-        <div class="hint" style="margin-top:6px;">能使用 /群文件 管理命令的人，逗号分隔；留空 = 仅机器人主人。点「选成员」从群里挑，不用手输。</div>
+        <div class="hint">能使用 /群文件 管理命令的人，逗号分隔；留空 = 仅机器人主人。</div>
       </div>
       <div class="g-admin-panel sub-panel" style="display:none;"></div>
       <div class="toolbar g-save-bar">
         <button class="g-save btn btn-primary" type="button">保存群基础信息</button>
-        <span class="hint-text">分类规则在「分类规则」页；定时 / 容量 / 查重在「定时与维护」页；导出 / 导入包含该群全部设置</span>
+        <span class="hint-text">规则 / 定时 / 容量在各自页签配置</span>
       </div>
+    </div>
+
+    <details class="g-backup">
+      <summary>导出 / 导入配置（整群迁移或备份）</summary>
+      <div class="g-export-panel sub-panel" style="display:none;">
+        <div class="muted" style="margin-bottom:var(--sp-2);">导出该群全部配置（规则 / 定时 / 容量 / 查重）：</div>
+        <textarea class="ge-text" rows="6" readonly style="width:100%;font-family:monospace;font-size:12px;"></textarea>
+        <div class="toolbar" style="margin-top:var(--sp-2);">
+          <button class="ge-gen btn" type="button">生成并显示</button>
+          <button class="ge-copy btn" type="button">复制 JSON</button>
+          <button class="ge-dl btn btn-primary" type="button">下载文件</button>
+          <span class="ge-msg hint-text"></span>
+        </div>
+      </div>
+      <div class="g-import-panel sub-panel" style="display:none;">
+        <div class="muted" style="margin-bottom:var(--sp-2);">导入配置（覆盖该群现有全部设置）：</div>
+        <textarea class="gi-text" rows="6" placeholder="把导出的 JSON 完整粘贴到这里" style="width:100%;font-family:monospace;font-size:12px;"></textarea>
+        <div class="toolbar" style="margin-top:var(--sp-2);">
+          <button class="gi-file btn" type="button">选择文件…</button>
+          <button class="gi-do btn btn-danger" type="button">确认覆盖导入</button>
+          <button class="gi-cancel btn" type="button">取消</button>
+          <span class="gi-msg hint-text"></span>
+        </div>
+      </div>
+    </details>
+
+    <div class="g-danger-zone">
+      <span class="hint-text">删除后该群规则/定时/时效/管理员配置一并删除</span>
+      <button class="g-del btn btn-danger" type="button">删除本群配置</button>
     </div>
   `;
 
@@ -802,6 +816,7 @@ function renderGroupCard(g) {
     const bodyEls = [];
     let node = card.firstElementChild;
     while (node) { const nx = node.nextElementSibling; if (node.tagName !== "H2") bodyEls.push(node); node = nx; }
+    // 新结构里 details/危险区也参与折叠（与基础信息一致）
     function setCollapsed(collapsed, persist) {
       bodyEls.forEach((el) => { el.style.display = collapsed ? "none" : ""; });
       colBtn.textContent = collapsed ? "▸ 展开" : "▾ 折叠";
@@ -873,13 +888,12 @@ function renderGroupCard(g) {
       geMsg.textContent = "导出失败：" + e.message;
     }
   };
-  card.querySelector(".g-export").addEventListener("click", async () => {
-    const show = exportPanel.style.display === "none";
-    exportPanel.style.display = show ? "block" : "none";
-    if (show) await loadExport();
+  const backupWrap = card.querySelector(".g-backup");
+  if (backupWrap) backupWrap.addEventListener("toggle", async () => {
+    if (backupWrap.open && !gePayload) await loadExport();
   });
   exportPanel.querySelector(".ge-gen").addEventListener("click", loadExport);
-  exportPanel.querySelector(".ge-close").addEventListener("click", () => { exportPanel.style.display = "none"; });
+
   exportPanel.querySelector(".ge-copy").addEventListener("click", async () => {
     if (!gePayload) { geMsg.textContent = "请先点「生成并显示」"; return; }
     try {
@@ -910,9 +924,11 @@ function renderGroupCard(g) {
   const importPanel = card.querySelector(".g-import-panel");
   const giText = importPanel.querySelector(".gi-text");
   const giMsg = importPanel.querySelector(".gi-msg");
-  card.querySelector(".g-import").addEventListener("click", () => {
-    importPanel.style.display = importPanel.style.display === "none" ? "block" : "none";
-    giMsg.textContent = "";
+  // 导入面板跟着 details 显示；打开时清空提示
+  if (backupWrap) backupWrap.addEventListener("toggle", () => {
+    importPanel.style.display = backupWrap.open ? "block" : "none";
+    exportPanel.style.display = backupWrap.open ? "block" : "none";
+    if (!backupWrap.open) giMsg.textContent = "";
   });
   const doImport = async (txt) => {
     const raw = String(txt || "").replace(/^\uFEFF/, "").trim();
@@ -1016,14 +1032,24 @@ function renderScopeList(available) {
     try {
       await bridge.apiPost("groups", { group_id: gid, enabled: checked });
       toast(checked ? `✅ 群 ${gid} 已启用本插件` : `⛔ 群 ${gid} 已停用（配置保留，勾回来即恢复）`);
+      // v2.9.1：只更新本地状态与行样式，不再整页重载（搜索框焦点与滚动位置保持）
+      const cfg = groupsData.find((g) => String(g.group_id) === String(gid));
+      if (cfg) cfg.enabled = checked;
+      else groupsData.push({ group_id: String(gid), name: "", enabled: checked, rules: [] });
+      const row = listEl.querySelector(`[data-gid="${gid}"]`);
+      if (row) { row.classList.toggle("on", checked); }
+      draw();
     } catch (e) {
       toast("保存失败：" + e.message, "error");
+      const cb2 = listEl.querySelector(`[data-gid="${gid}"] input`);
+      if (cb2) cb2.checked = !checked;
     }
-    // loadGroups 会用当前搜索词重渲染（搜索框内容不被清掉）
-    await loadGroups();
   }
 
   function draw() {
+    // 每次重绘都按最新 groupsData 重建映射，保证勾选后状态即时正确
+    Object.keys(cfgMap).forEach((k) => delete cfgMap[k]);
+    groupsData.forEach((g) => { cfgMap[String(g.group_id)] = g; });
     const kw = (searchEl.value || "").trim().toLowerCase();
     const filtered = rows.filter((r) => !kw || r.name.toLowerCase().includes(kw) || r.id.includes(kw));
     const enabledCount = rows.filter((r) => cfgMap[r.id] && cfgMap[r.id].enabled !== false).length;
@@ -1036,6 +1062,7 @@ function renderScopeList(available) {
       const on = !!cfg && cfg.enabled !== false;
       const wrap = document.createElement("label");
       wrap.className = "g-scope-row" + (on ? " on" : "");
+      wrap.dataset.gid = r.id;
       const info = [];
       if (r.members != null) info.push(r.members + " 人");
       if (cfg) info.push((cfg.rules || []).length + " 条规则");
@@ -1054,7 +1081,7 @@ function renderScopeList(available) {
         $("g-name").value = (cfg && cfg.name) || (r.orphan ? r.name : "");
         const pick = $("g-pick");
         if ([...pick.options].some((o) => o.value === r.id)) pick.value = r.id;
-        loadGroups().then(() => switchToEdit(gid));
+        loadGroups().then(() => switchToEdit(r.id));
       });
       listEl.appendChild(wrap);
     });
@@ -2330,7 +2357,7 @@ $("m-export").addEventListener("click", async () => {
       limits: data.limits || {},
       ttl: data.ttl || {},
       dupe_rule: data.dupe_rule || {},
-      export_version: "2.9.0",
+      export_version: "2.9.1",
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const a = document.createElement("a");
@@ -3400,7 +3427,7 @@ window.addEventListener("beforeunload", (e) => {
   e.returnValue = "";
 });
 
-// ---------- 任务（v2.9.0） ----------
+// ---------- 任务（v2.9.1） ----------
 // ---------- init ----------
 (async function init() {
   try {
